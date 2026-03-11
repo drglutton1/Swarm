@@ -1,0 +1,13 @@
+[simulation]
+players = 8
+starting_stack = 1000
+ante = 10
+rake_per_hand = 1
+default_hands = 10
+default_seed = 1337
+benchmark_hands = 100000
+
+[notes]
+stage = "A"
+phase = 1
+focus = "engine foundation, evaluator correctness, chip conservation, benchmark harness"
