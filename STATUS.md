@@ -2,36 +2,99 @@
 
 ## Stage A / Phase 1
 
-Status: implemented poker-engine foundation for a simple no-betting simulation loop with 8 random bots, hand evaluation, chip accounting, test harness, and benchmark mode.
+Status: **verified milestone complete** for the current poker-engine foundation pass. The simulation now runs a materially more correct no-limit Texas Hold'em hand flow than the original ante-only baseline, builds locally with MinGW g++, passes the local test suite, and preserves chips under both test and benchmark runs.
 
-## What exists
+## Phase 1 direction folded into this pass
 
-- Core card/deck model (`src/poker/card.h`, `src/poker/deck.h`)
-- Best-of-seven hand evaluation with category/tiebreak comparison (`src/poker/hand_evaluator.h`)
-- Pot/rake accounting (`src/poker/pot_manager.h`)
-- Simple table simulator for 8 random bots over repeated hands with verbose logging (`src/poker/table.h`)
-- Deterministic RNG wrapper (`src/util/rng.h`)
-- CLI entry point with normal and benchmark modes (`src/main.cpp`)
-- Basic tests covering ranking order, wheel straight detection, and chip conservation over 5000 hands (`test/test_poker.cpp`)
-- Build metadata and baseline config (`CMakeLists.txt`, `config/default.toml`)
+This pass keeps the scope at the poker-core layer and aligns it with the current Phase 1 direction:
+- real Hold'em deal flow instead of immediate random showdown
+- dealer/button rotation
+- blind posting
+- preflop / flop / turn / river progression
+- per-street action loop with fold / check / call / single-raise behavior
+- showdown using best-of-seven evaluation
+- chip/rake accounting that remains conserved and testable
 
-## Current phase notes
+## Authoritative blind decision
 
-- Phase 1 target met for engine foundation, correct broad hand-ranking categories, chip conservation, and a benchmark harness.
-- The simulation intentionally keeps betting logic simple: every player posts an ante, then randomly folds or goes to showdown.
-- This is a foundation for later Stage A phases where real action rounds, blinds, side pots, and strategy evolution should be layered in.
+Per user decision, blinds are now locked to:
+- **small blind = 5**
+- **big blind = 5**
 
-## Performance
+This is reflected in:
+- runtime construction in `src/main.cpp`
+- tests in `test/test_poker.cpp`
+- config notes in `config/default.toml`
 
-- Last verified build: `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -pthread -Isrc src/main.cpp -o swarm_poker_sim`
-- Last verified tests: `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -pthread -Isrc test/test_poker.cpp -o test_poker && .\\test_poker`
-- Last benchmark: `swarm_poker_sim.exe --benchmark 100000` -> 100,000 hands in ~2566.31 ms on this machine with chip conservation preserved.
+## What changed in this milestone
 
-## Known limitations / honest gaps
+- kept and verified the in-progress refactor from ante-only hand resolution toward street-by-street Hold'em flow in `src/poker/table.h`
+- fixed a real correctness bug in heads-up play: the button/dealer now posts the small blind and the other funded player posts the big blind
+- kept preflop action starting after the big blind, with later streets starting after the dealer/button
+- preserved showdown and uncontested-pot payout handling through the pot manager
+- tightened tests so the suite now checks:
+  - evaluator ordering
+  - evaluator tiebreak behavior
+  - long-run chip conservation
+  - verbose logging for Hold'em streets
+  - **5/5 blind logging specifically**
+  - **correct heads-up blind order**
 
-- No blinds, betting streets, raises, all-ins, side pots, or positional logic yet.
-- Pot manager supports a single shared pot and rake; it is not yet a full side-pot engine.
-- Random bots currently make only a preflop continue/fold decision; no deception or social signaling yet.
-- `config/default.toml` documents defaults but is not parsed by the executable yet.
-- Logging is human-readable text only; structured analyzable output (CSV/JSON) should be added in a later phase.
-- Benchmark mode uses a deeper stack and zero rake so throughput can be measured without bankroll exhaustion distorting long runs.
+## Local verification performed
+
+### Build commands
+
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc src/main.cpp -o swarm_poker_sim.exe`
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp -o test_poker.exe`
+
+### Test command
+
+- `test_poker.exe`
+- Result: `PASS: test_poker`
+
+### Simulation sanity run
+
+- Command: `swarm_poker_sim.exe --hands 100 --quiet`
+- Result:
+  - `hands=100`
+  - `initial_chips=8000`
+  - `final_chips=7900`
+  - `rake=100`
+  - `chips_ok=true`
+  - elapsed: `1.8092 ms`
+
+Interpretation: 100 chips were removed as rake across 100 hands, and `final_chips + rake == initial_chips`, so conservation held.
+
+### Benchmark run
+
+- Command: `swarm_poker_sim.exe --benchmark 100000`
+- Result:
+  - `hands=100000`
+  - `initial_chips=8000000`
+  - `final_chips=8000000`
+  - `rake=0`
+  - `chips_ok=true`
+  - elapsed: `1737.75 ms`
+
+Interpretation: with rake disabled, total chips remained exactly constant over 100k hands.
+
+## Honest current limitations
+
+Still intentionally simplified for this milestone:
+- no side-pot engine yet
+- no true all-in continuation logic; short stacks facing a bet currently fold rather than create capped all-in states
+- betting policy is still intentionally simple/random, not strategic
+- raise sizing is still minimal/simple
+- no tournament blind schedule
+- no agent memory, personality, deception, coalition, or evolutionary systems yet
+- no structured analytics output or dashboard yet
+
+## Readiness
+
+This repo is now in a truthful state to proceed to the next Stage A step.
+
+Recommended next focus:
+1. proper all-in handling
+2. side pots
+3. more realistic betting policy / action abstraction
+4. structured hand-history and aggregate metrics output

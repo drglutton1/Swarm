@@ -1,7 +1,8 @@
 [simulation]
 players = 8
 starting_stack = 1000
-ante = 10
+small_blind = 5
+big_blind = 5
 rake_per_hand = 1
 default_hands = 10
 default_seed = 1337

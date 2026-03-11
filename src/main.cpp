@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
 
         const std::int64_t starting_stack = benchmark ? 1000000 : 1000;
         const std::int64_t rake_per_hand = benchmark ? 0 : 1;
-        swarm::poker::Table table(8, starting_stack, 10, rake_per_hand, seed);
+        swarm::poker::Table table(8, starting_stack, 5, 5, rake_per_hand, seed);
         const auto summary = table.run(benchmark ? benchmark_hands : hands, verbose, std::cout);
 
         std::cout << "Summary: hands=" << summary.hands_played

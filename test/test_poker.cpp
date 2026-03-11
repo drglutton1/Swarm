@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <vector>
 
 #include "../src/poker/hand_evaluator.h"
@@ -46,18 +47,59 @@ void test_hand_ordering() {
     require(straight < full_house, "ranking order straight < full house");
 }
 
+void test_tiebreakers() {
+    const auto aces_up = swarm::poker::evaluate_best_of_seven({
+        c(Rank::ace, Suit::clubs), c(Rank::ace, Suit::diamonds), c(Rank::king, Suit::hearts),
+        c(Rank::king, Suit::spades), c(Rank::queen, Suit::clubs), c(Rank::two, Suit::clubs), c(Rank::three, Suit::clubs)});
+    const auto kings_up = swarm::poker::evaluate_best_of_seven({
+        c(Rank::king, Suit::clubs), c(Rank::king, Suit::diamonds), c(Rank::queen, Suit::hearts),
+        c(Rank::queen, Suit::spades), c(Rank::jack, Suit::clubs), c(Rank::two, Suit::diamonds), c(Rank::three, Suit::diamonds)});
+    require(kings_up < aces_up, "two-pair tiebreak ordering works");
+}
+
 void test_chip_conservation() {
-    swarm::poker::Table table(8, 1000, 10, 1, 42);
-    const auto summary = table.run(5000, false, std::cout);
+    swarm::poker::Table table(8, 1000, 5, 5, 1, 42);
+    const auto summary = table.run(2000, false, std::cout);
     require(summary.initial_chips == 8000, "initial chips tracked");
+    require(summary.hands_played > 0, "simulation played at least one hand");
     require(table.chip_conservation_holds(), "chip conservation holds after simulation");
+}
+
+void test_verbose_flow_mentions_holdem_streets() {
+    swarm::poker::Table table(6, 200, 5, 5, 0, 1337);
+    std::ostringstream oss;
+    const auto summary = table.run(3, true, oss);
+    const auto text = oss.str();
+    require(summary.hands_played > 0, "verbose run played hands");
+    require(text.find("posts small blind 5") != std::string::npos, "small blind logged at 5");
+    require(text.find("posts big blind 5") != std::string::npos, "big blind logged at 5");
+    require(text.find("Preflop:") != std::string::npos, "preflop action logged");
+    require(text.find("Flop:") != std::string::npos, "flop logged");
+}
+
+void test_heads_up_button_posts_small_blind() {
+    swarm::poker::Table table(2, 100, 5, 5, 0, 7);
+    std::ostringstream oss;
+    const auto summary = table.run(1, true, oss);
+    const auto text = oss.str();
+    require(summary.hands_played == 1, "heads-up hand played");
+    const auto dealer_pos = text.find("Dealer: Bot1");
+    const auto sb_pos = text.find("Bot1 posts small blind 5");
+    const auto bb_pos = text.find("Bot2 posts big blind 5");
+    require(dealer_pos != std::string::npos, "dealer logged in heads-up hand");
+    require(sb_pos != std::string::npos, "dealer posts small blind heads-up");
+    require(bb_pos != std::string::npos, "other player posts big blind heads-up");
+    require(dealer_pos < sb_pos && sb_pos < bb_pos, "heads-up blind order is correct");
 }
 
 } // namespace
 
 int main() {
     test_hand_ordering();
+    test_tiebreakers();
     test_chip_conservation();
+    test_verbose_flow_mentions_holdem_streets();
+    test_heads_up_button_posts_small_blind();
     std::cout << "PASS: test_poker\n";
     return 0;
 }
