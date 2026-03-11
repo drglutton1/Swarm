@@ -1,10 +1,17 @@
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <vector>
 
+#include "../src/core/agent.h"
+#include "../src/core/chromosome.h"
+#include "../src/core/genome.h"
+#include "../src/core/ocean.h"
+#include "../src/core/swarm.h"
 #include "../src/poker/hand_evaluator.h"
 #include "../src/poker/table.h"
+#include "../src/util/rng.h"
 
 using swarm::poker::Card;
 using swarm::poker::HandCategory;
@@ -22,6 +29,24 @@ void require(bool condition, const char* message) {
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
+}
+
+const char* action_name(swarm::core::ActionType action) {
+    switch (action) {
+        case swarm::core::ActionType::fold:
+            return "fold";
+        case swarm::core::ActionType::check_call:
+            return "check/call";
+        case swarm::core::ActionType::raise:
+            return "raise";
+    }
+    return "unknown";
+}
+
+swarm::core::Agent make_agent(swarm::util::Rng& rng, std::uint32_t ocean_size, std::size_t state_size) {
+    constexpr std::size_t parameter_count = 96;
+    auto genome = swarm::core::Genome::random(parameter_count, ocean_size, rng);
+    return swarm::core::Agent(std::move(genome), swarm::core::DecoderConfig{state_size, 4, 3});
 }
 
 void test_hand_ordering() {
@@ -92,6 +117,64 @@ void test_heads_up_button_posts_small_blind() {
     require(dealer_pos < sb_pos && sb_pos < bb_pos, "heads-up blind order is correct");
 }
 
+void test_ocean_and_swarm_decisions() {
+    swarm::util::Rng rng(20260311);
+    constexpr std::size_t state_size = 6;
+    constexpr std::uint32_t ocean_size = 256;
+    swarm::core::Ocean ocean(ocean_size);
+    ocean.initialize_uniform(-1.0f, 1.0f, rng);
+    ocean.decay(0.99f);
+    require(ocean.size() == ocean_size, "ocean size matches");
+    require(std::fabs(ocean.get(0)) <= 0.99f, "ocean decay keeps values sane");
+
+    for (int swarm_index = 0; swarm_index < 100; ++swarm_index) {
+        std::vector<swarm::core::Agent> odd_agents;
+        std::vector<swarm::core::Agent> even_agents;
+        for (int i = 0; i < 3; ++i) {
+            odd_agents.push_back(make_agent(rng, ocean_size, state_size));
+            even_agents.push_back(make_agent(rng, ocean_size, state_size));
+        }
+
+        swarm::core::Swarm swarm(
+            swarm::core::Chromosome(std::move(odd_agents)),
+            swarm::core::Chromosome(std::move(even_agents)));
+
+        swarm::core::PokerStateVector state{{
+                static_cast<float>(rng.uniform_real(0.0, 1.0)),
+                static_cast<float>(rng.uniform_real(0.0, 1.0)),
+                static_cast<float>(rng.uniform_real(0.0, 1.0)),
+                static_cast<float>(rng.uniform_real(0.0, 1.0)),
+                static_cast<float>(rng.uniform_real(0.0, 1.0)),
+                static_cast<float>(rng.uniform_real(0.0, 1.0))},
+            static_cast<float>(rng.uniform_real(0.0, 20.0)),
+            static_cast<float>(rng.uniform_real(2.0, 15.0)),
+            static_cast<float>(rng.uniform_real(10.0, 120.0)),
+            static_cast<float>(rng.uniform_real(30.0, 200.0))};
+
+        const auto odd_decision = swarm.decide(ocean, state, 1);
+        const auto even_decision = swarm.decide(ocean, state, 2);
+
+        for (const auto& decision : {odd_decision, even_decision}) {
+            const float score_sum = decision.action_scores[0] + decision.action_scores[1] + decision.action_scores[2];
+            require(std::fabs(score_sum - 1.0f) < 0.0001f, "action scores sum to 1");
+            require(decision.action == swarm::core::ActionType::fold || decision.action == swarm::core::ActionType::check_call || decision.action == swarm::core::ActionType::raise,
+                "decision action valid");
+            require(decision.confidence >= 0.0f && decision.confidence <= 1.0f, "confidence in range");
+            require(decision.raise_amount >= 0.0f, "raise amount non-negative");
+            require(decision.raise_amount <= state.stack - state.to_call + 0.0001f, "raise amount within stack cap");
+            if (decision.action != swarm::core::ActionType::raise) {
+                require(decision.raise_amount == 0.0f, "non-raise action has zero raise amount");
+            }
+        }
+
+        require(swarm.governance_for_turn(1) == swarm::core::GovernanceMode::alpha_led, "odd turn is alpha-led");
+        require(swarm.governance_for_turn(2) == swarm::core::GovernanceMode::democratic, "even turn is democratic");
+        if (swarm_index == -1) {
+            std::cout << action_name(odd_decision.action) << action_name(even_decision.action);
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -100,6 +183,7 @@ int main() {
     test_chip_conservation();
     test_verbose_flow_mentions_holdem_streets();
     test_heads_up_button_posts_small_blind();
+    test_ocean_and_swarm_decisions();
     std::cout << "PASS: test_poker\n";
     return 0;
 }
