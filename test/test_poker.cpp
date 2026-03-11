@@ -4,9 +4,6 @@
 #include <sstream>
 #include <vector>
 
-#include "../src/core/agent.h"
-#include "../src/core/chromosome.h"
-#include "../src/core/genome.h"
 #include "../src/core/ocean.h"
 #include "../src/core/swarm.h"
 #include "../src/poker/hand_evaluator.h"
@@ -29,24 +26,6 @@ void require(bool condition, const char* message) {
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
-}
-
-const char* action_name(swarm::core::ActionType action) {
-    switch (action) {
-        case swarm::core::ActionType::fold:
-            return "fold";
-        case swarm::core::ActionType::check_call:
-            return "check/call";
-        case swarm::core::ActionType::raise:
-            return "raise";
-    }
-    return "unknown";
-}
-
-swarm::core::Agent make_agent(swarm::util::Rng& rng, std::uint32_t ocean_size, std::size_t state_size) {
-    constexpr std::size_t parameter_count = 96;
-    auto genome = swarm::core::Genome::random(parameter_count, ocean_size, rng);
-    return swarm::core::Agent(std::move(genome), swarm::core::DecoderConfig{state_size, 4, 3});
 }
 
 void test_hand_ordering() {
@@ -117,28 +96,55 @@ void test_heads_up_button_posts_small_blind() {
     require(dealer_pos < sb_pos && sb_pos < bb_pos, "heads-up blind order is correct");
 }
 
-void test_ocean_and_swarm_decisions() {
+void test_ocean_substrate_behavior() {
+    swarm::core::Ocean ocean(8, 0.0f);
+    ocean.set(0, 1.0f);
+    ocean.set(1, 3.0f);
+    ocean.set(7, 5.0f);
+    require(ocean.wrap_index(-1) == 7, "ocean wrap index handles negatives");
+    require(std::fabs(ocean.window_mean(0, 1) - 3.0f) < 0.0001f, "ocean window mean uses circular neighborhood");
+    require(std::fabs(ocean.local_gradient(0) - (3.0f - 5.0f)) < 0.0001f, "ocean local gradient uses adjacent values");
+    ocean.diffuse(0.5f);
+    ocean.deposit(0, 0.25f);
+    require(ocean.get(0) > 1.0f, "ocean deposit updates substrate after diffusion");
+}
+
+void test_swarm_birth_and_governance_invariants() {
     swarm::util::Rng rng(20260311);
-    constexpr std::size_t state_size = 6;
-    constexpr std::uint32_t ocean_size = 256;
-    swarm::core::Ocean ocean(ocean_size);
+    swarm::core::Ocean ocean(512);
     ocean.initialize_uniform(-1.0f, 1.0f, rng);
+    ocean.diffuse(0.2f);
     ocean.decay(0.99f);
-    require(ocean.size() == ocean_size, "ocean size matches");
-    require(std::fabs(ocean.get(0)) <= 0.99f, "ocean decay keeps values sane");
 
-    for (int swarm_index = 0; swarm_index < 100; ++swarm_index) {
-        std::vector<swarm::core::Agent> odd_agents;
-        std::vector<swarm::core::Agent> even_agents;
-        for (int i = 0; i < 3; ++i) {
-            odd_agents.push_back(make_agent(rng, ocean_size, state_size));
-            even_agents.push_back(make_agent(rng, ocean_size, state_size));
-        }
+    constexpr std::size_t state_size = 6;
+    for (int swarm_index = 0; swarm_index < 200; ++swarm_index) {
+        auto swarm = swarm::core::Swarm::random(static_cast<std::uint32_t>(ocean.size()), state_size, rng);
+        require(swarm.total_agents() >= 4 && swarm.total_agents() <= 18, "swarm total agents stays within 4-18");
+        require(swarm.first_chromosome().size() >= 2 && swarm.first_chromosome().size() <= 9, "first chromosome has valid size");
+        require(swarm.second_chromosome().size() >= 2 && swarm.second_chromosome().size() <= 9, "second chromosome has valid size");
+        require(swarm.first_chromosome().size() + swarm.second_chromosome().size() == swarm.total_agents(), "chromosome sizes sum to swarm total");
+        require(swarm.first_chromosome().blueprint().chromosome_agent_count == swarm.first_chromosome().size(), "first chromosome blueprint matches realized count");
+        require(swarm.second_chromosome().blueprint().chromosome_agent_count == swarm.second_chromosome().size(), "second chromosome blueprint matches realized count");
+        require(!swarm.first_chromosome().blueprint().sensory_indices.empty(), "first chromosome blueprint has sensory indices");
+        require(!swarm.second_chromosome().blueprint().action_indices.empty(), "second chromosome blueprint has action indices");
 
-        swarm::core::Swarm swarm(
-            swarm::core::Chromosome(std::move(odd_agents)),
-            swarm::core::Chromosome(std::move(even_agents)));
+        const auto expected_mode = (swarm.total_agents() % 2 == 1)
+            ? swarm::core::GovernanceMode::alpha_led
+            : swarm::core::GovernanceMode::democratic;
+        require(swarm.governance_mode() == expected_mode, "governance mode follows total-agent parity");
+    }
+}
 
+void test_random_swarm_decisions() {
+    swarm::util::Rng rng(99);
+    swarm::core::Ocean ocean(512);
+    ocean.initialize_uniform(-1.0f, 1.0f, rng);
+    ocean.diffuse(0.25f);
+    ocean.decay(0.995f);
+
+    constexpr std::size_t state_size = 6;
+    for (int i = 0; i < 200; ++i) {
+        auto swarm = swarm::core::Swarm::random(static_cast<std::uint32_t>(ocean.size()), state_size, rng);
         swarm::core::PokerStateVector state{{
                 static_cast<float>(rng.uniform_real(0.0, 1.0)),
                 static_cast<float>(rng.uniform_real(0.0, 1.0)),
@@ -151,26 +157,16 @@ void test_ocean_and_swarm_decisions() {
             static_cast<float>(rng.uniform_real(10.0, 120.0)),
             static_cast<float>(rng.uniform_real(30.0, 200.0))};
 
-        const auto odd_decision = swarm.decide(ocean, state, 1);
-        const auto even_decision = swarm.decide(ocean, state, 2);
-
-        for (const auto& decision : {odd_decision, even_decision}) {
-            const float score_sum = decision.action_scores[0] + decision.action_scores[1] + decision.action_scores[2];
-            require(std::fabs(score_sum - 1.0f) < 0.0001f, "action scores sum to 1");
-            require(decision.action == swarm::core::ActionType::fold || decision.action == swarm::core::ActionType::check_call || decision.action == swarm::core::ActionType::raise,
-                "decision action valid");
-            require(decision.confidence >= 0.0f && decision.confidence <= 1.0f, "confidence in range");
-            require(decision.raise_amount >= 0.0f, "raise amount non-negative");
-            require(decision.raise_amount <= state.stack - state.to_call + 0.0001f, "raise amount within stack cap");
-            if (decision.action != swarm::core::ActionType::raise) {
-                require(decision.raise_amount == 0.0f, "non-raise action has zero raise amount");
-            }
-        }
-
-        require(swarm.governance_for_turn(1) == swarm::core::GovernanceMode::alpha_led, "odd turn is alpha-led");
-        require(swarm.governance_for_turn(2) == swarm::core::GovernanceMode::democratic, "even turn is democratic");
-        if (swarm_index == -1) {
-            std::cout << action_name(odd_decision.action) << action_name(even_decision.action);
+        const auto decision = swarm.decide(ocean, state, static_cast<std::size_t>(i + 1));
+        const float score_sum = decision.action_scores[0] + decision.action_scores[1] + decision.action_scores[2];
+        require(std::fabs(score_sum - 1.0f) < 0.0001f, "action scores sum to 1");
+        require(decision.action == swarm::core::ActionType::fold || decision.action == swarm::core::ActionType::check_call || decision.action == swarm::core::ActionType::raise,
+            "decision action valid");
+        require(decision.confidence >= 0.0f && decision.confidence <= 1.0f, "confidence in range");
+        require(decision.raise_amount >= 0.0f, "raise amount non-negative");
+        require(decision.raise_amount <= state.stack - state.to_call + 0.0001f, "raise amount within stack cap");
+        if (decision.action != swarm::core::ActionType::raise) {
+            require(decision.raise_amount == 0.0f, "non-raise action has zero raise amount");
         }
     }
 }
@@ -183,7 +179,9 @@ int main() {
     test_chip_conservation();
     test_verbose_flow_mentions_holdem_streets();
     test_heads_up_button_posts_small_blind();
-    test_ocean_and_swarm_decisions();
+    test_ocean_substrate_behavior();
+    test_swarm_birth_and_governance_invariants();
+    test_random_swarm_decisions();
     std::cout << "PASS: test_poker\n";
     return 0;
 }

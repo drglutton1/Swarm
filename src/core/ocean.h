@@ -22,6 +22,12 @@ public:
     void fill(float value);
     void initialize_uniform(float min_value, float max_value, swarm::util::Rng& rng);
     void decay(float factor);
+    void diffuse(float neighbor_mix);
+    void deposit(std::uint32_t index, float delta);
+
+    [[nodiscard]] std::uint32_t wrap_index(std::int64_t index) const;
+    [[nodiscard]] float window_mean(std::uint32_t center, std::uint32_t radius) const;
+    [[nodiscard]] float local_gradient(std::uint32_t center) const;
 
     [[nodiscard]] const std::vector<float>& values() const noexcept;
 

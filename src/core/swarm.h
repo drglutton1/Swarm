@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include "chromosome.h"
+#include "../util/rng.h"
 
 namespace swarm::core {
 
@@ -14,17 +15,20 @@ enum class GovernanceMode {
 class Swarm {
 public:
     Swarm() = default;
-    Swarm(Chromosome odd_chromosome, Chromosome even_chromosome);
+    Swarm(Chromosome first_chromosome, Chromosome second_chromosome);
 
-    [[nodiscard]] GovernanceMode governance_for_turn(std::size_t hand_number) const noexcept;
-    [[nodiscard]] Decision decide(const Ocean& ocean, const PokerStateVector& state, std::size_t hand_number) const;
+    static Swarm random(std::uint32_t ocean_size, std::size_t state_size, swarm::util::Rng& rng);
 
-    [[nodiscard]] const Chromosome& odd_chromosome() const noexcept;
-    [[nodiscard]] const Chromosome& even_chromosome() const noexcept;
+    [[nodiscard]] GovernanceMode governance_mode() const noexcept;
+    [[nodiscard]] Decision decide(const Ocean& ocean, const PokerStateVector& state, std::size_t hand_number = 0) const;
+
+    [[nodiscard]] const Chromosome& first_chromosome() const noexcept;
+    [[nodiscard]] const Chromosome& second_chromosome() const noexcept;
+    [[nodiscard]] std::size_t total_agents() const noexcept;
 
 private:
-    Chromosome odd_chromosome_;
-    Chromosome even_chromosome_;
+    Chromosome first_chromosome_;
+    Chromosome second_chromosome_;
 };
 
 } // namespace swarm::core

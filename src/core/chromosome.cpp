@@ -5,14 +5,32 @@
 
 namespace swarm::core {
 
-Chromosome::Chromosome(std::vector<Agent> agents) : agents_(std::move(agents)) {}
+Chromosome::Chromosome(std::vector<Agent> agents, Genome blueprint)
+    : agents_(std::move(agents)), blueprint_(std::move(blueprint)) {}
+
+Chromosome Chromosome::spawn_from_blueprint(const Genome& blueprint, std::size_t agent_count, const DecoderConfig& config, std::uint32_t ocean_size) {
+    std::vector<Agent> agents;
+    agents.reserve(agent_count);
+    for (std::size_t slot = 0; slot < agent_count; ++slot) {
+        agents.emplace_back(blueprint.derive_agent_variant(slot, ocean_size), config);
+    }
+    return Chromosome(std::move(agents), blueprint);
+}
 
 const std::vector<Agent>& Chromosome::agents() const noexcept {
     return agents_;
 }
 
+const Genome& Chromosome::blueprint() const noexcept {
+    return blueprint_;
+}
+
 bool Chromosome::empty() const noexcept {
     return agents_.empty();
+}
+
+std::size_t Chromosome::size() const noexcept {
+    return agents_.size();
 }
 
 Decision Chromosome::decide(const Ocean& ocean, const PokerStateVector& state) const {
@@ -21,16 +39,19 @@ Decision Chromosome::decide(const Ocean& ocean, const PokerStateVector& state) c
     }
 
     Decision aggregate;
-    for (const Agent& agent : agents_) {
-        const Decision decision = agent.decide(ocean, state);
-        for (std::size_t i = 0; i < aggregate.action_scores.size(); ++i) {
-            aggregate.action_scores[i] += decision.action_scores[i];
+    float total_weight = 0.0f;
+    for (std::size_t i = 0; i < agents_.size(); ++i) {
+        const Decision decision = agents_[i].decide(ocean, state);
+        const float weight = 1.0f + static_cast<float>(i == 0 ? blueprint_.alpha_bias : 0.0f);
+        total_weight += weight;
+        for (std::size_t score_index = 0; score_index < aggregate.action_scores.size(); ++score_index) {
+            aggregate.action_scores[score_index] += decision.action_scores[score_index] * weight;
         }
-        aggregate.raise_amount += decision.raise_amount;
-        aggregate.confidence += decision.confidence;
+        aggregate.raise_amount += decision.raise_amount * weight;
+        aggregate.confidence += decision.confidence * weight;
     }
 
-    const float scale = 1.0f / static_cast<float>(agents_.size());
+    const float scale = total_weight > 0.0f ? (1.0f / total_weight) : 1.0f;
     for (float& score : aggregate.action_scores) {
         score *= scale;
     }

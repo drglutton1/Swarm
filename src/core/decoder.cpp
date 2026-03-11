@@ -8,13 +8,15 @@
 namespace swarm::core {
 namespace {
 
-float consume_parameter(const Ocean& ocean, const Genome& genome, std::size_t& cursor) {
-    if (genome.parameter_indices.empty()) {
+float substrate_signal(const Ocean& ocean, std::uint32_t index, std::uint32_t radius) {
+    return 0.7f * ocean.window_mean(index, radius) + 0.3f * ocean.local_gradient(index);
+}
+
+float read_or_zero(const std::vector<std::uint32_t>& indices, std::size_t position, const Ocean& ocean, std::uint32_t radius) {
+    if (indices.empty()) {
         return 0.0f;
     }
-    const std::uint32_t ocean_index = genome.parameter_indices[cursor % genome.parameter_indices.size()];
-    ++cursor;
-    return ocean.get(ocean_index);
+    return substrate_signal(ocean, indices[position % indices.size()], radius);
 }
 
 } // namespace
@@ -23,27 +25,36 @@ Decision Decoder::decode(const Ocean& ocean, const Genome& genome, const Decoder
     if (config.state_size == 0 || state.features.size() != config.state_size) {
         throw std::invalid_argument("decoder state size mismatch");
     }
+    if (genome.empty()) {
+        throw std::invalid_argument("decoder requires non-empty genome");
+    }
 
     const std::size_t hidden_units = std::max<std::size_t>(1, genome.hidden_units == 0 ? config.hidden_units : genome.hidden_units);
+    const std::uint32_t radius = std::max<std::uint32_t>(1, genome.ocean_window_radius);
     std::vector<float> hidden(hidden_units, 0.0f);
-    std::size_t cursor = 0;
 
     for (std::size_t h = 0; h < hidden_units; ++h) {
-        float activation = consume_parameter(ocean, genome, cursor);
+        float activation = read_or_zero(genome.hidden_indices, h * 2, ocean, radius);
         for (std::size_t i = 0; i < state.features.size(); ++i) {
-            activation += state.features[i] * consume_parameter(ocean, genome, cursor);
+            const float sensory = read_or_zero(genome.sensory_indices, i, ocean, radius);
+            const float hidden_weight = read_or_zero(genome.hidden_indices, h * 2 + 1 + i, ocean, radius);
+            activation += state.features[i] * sensory * hidden_weight;
         }
         hidden[h] = tanh_like(activation);
     }
 
     std::array<float, 3> logits {0.0f, 0.0f, 0.0f};
     for (std::size_t a = 0; a < logits.size(); ++a) {
-        float value = consume_parameter(ocean, genome, cursor);
-        for (float h : hidden) {
-            value += h * consume_parameter(ocean, genome, cursor);
+        float value = read_or_zero(genome.action_indices, a * 2, ocean, radius);
+        for (std::size_t h = 0; h < hidden.size(); ++h) {
+            value += hidden[h] * read_or_zero(genome.action_indices, a * 2 + 1 + h, ocean, radius);
         }
         logits[a] = value;
     }
+
+    logits[0] -= state.to_call * 0.03f + genome.risk_gene * 0.1f;
+    logits[1] += (state.stack > 0.0f ? (state.pot / std::max(state.stack, 1.0f)) : 0.0f) * 0.15f;
+    logits[2] += genome.alpha_bias * 0.2f + genome.risk_gene * 0.35f;
 
     float max_logit = *std::max_element(logits.begin(), logits.end());
     std::array<float, 3> scores {0.0f, 0.0f, 0.0f};
@@ -67,12 +78,13 @@ Decision Decoder::decode(const Ocean& ocean, const Genome& genome, const Decoder
         }
     }
 
-    const float raise_signal = sigmoid(consume_parameter(ocean, genome, cursor) + hidden.front() * genome.aggressiveness_gene);
-    const float confidence_signal = sigmoid(consume_parameter(ocean, genome, cursor) + hidden.back() * genome.confidence_gene);
+    const float raise_signal = sigmoid(read_or_zero(genome.modulation_indices, 0, ocean, radius) + hidden.front() * genome.risk_gene + state.pot * 0.01f);
+    const float confidence_signal = sigmoid(read_or_zero(genome.modulation_indices, 1, ocean, radius) + hidden.back() * genome.confidence_gene);
     const float stack_cap = std::max(state.stack, 0.0f);
     const float min_raise = std::max(state.min_raise, 0.0f);
     const float raise_room = std::max(0.0f, stack_cap - state.to_call);
-    const float raise_amount = std::clamp(min_raise + raise_signal * (state.pot + min_raise), 0.0f, raise_room);
+    const float raise_span = std::max(state.pot + min_raise, min_raise);
+    const float raise_amount = std::clamp(min_raise + raise_signal * raise_span, 0.0f, raise_room);
 
     Decision decision;
     decision.action_scores = scores;

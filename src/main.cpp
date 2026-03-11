@@ -3,11 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
-#include "core/agent.h"
-#include "core/chromosome.h"
-#include "core/genome.h"
 #include "core/ocean.h"
 #include "core/swarm.h"
 #include "poker/table.h"
@@ -30,12 +26,6 @@ const char* action_name(swarm::core::ActionType action) {
             return "raise";
     }
     return "unknown";
-}
-
-swarm::core::Agent make_agent(swarm::util::Rng& rng, std::uint32_t ocean_size, std::size_t state_size) {
-    constexpr std::size_t parameter_count = 64;
-    auto genome = swarm::core::Genome::random(parameter_count, ocean_size, rng);
-    return swarm::core::Agent(std::move(genome), swarm::core::DecoderConfig{state_size, 4, 3});
 }
 
 } // namespace
@@ -69,27 +59,21 @@ int main(int argc, char** argv) {
         }
 
         swarm::util::Rng rng(seed + 99);
-        swarm::core::Ocean ocean(256);
+        swarm::core::Ocean ocean(512);
         ocean.initialize_uniform(-1.0f, 1.0f, rng);
+        ocean.diffuse(0.25f);
         ocean.decay(0.995f);
+        ocean.deposit(17, 0.2f);
 
         const std::size_t state_size = 6;
-        std::vector<swarm::core::Agent> odd_agents;
-        std::vector<swarm::core::Agent> even_agents;
-        for (int i = 0; i < 3; ++i) {
-            odd_agents.push_back(make_agent(rng, static_cast<std::uint32_t>(ocean.size()), state_size));
-            even_agents.push_back(make_agent(rng, static_cast<std::uint32_t>(ocean.size()), state_size));
-        }
-
-        swarm::core::Swarm swarm(
-            swarm::core::Chromosome(std::move(odd_agents)),
-            swarm::core::Chromosome(std::move(even_agents)));
+        swarm::core::Swarm swarm = swarm::core::Swarm::random(static_cast<std::uint32_t>(ocean.size()), state_size, rng);
 
         const swarm::core::PokerStateVector sample_state{{0.65f, 0.30f, 0.55f, 0.10f, 0.75f, 0.40f}, 5.0f, 10.0f, 25.0f, 100.0f};
         const auto decision = swarm.decide(ocean, sample_state, 1);
 
-        std::cout << "Swarm demo: governance="
-                  << (swarm.governance_for_turn(1) == swarm::core::GovernanceMode::alpha_led ? "alpha-led" : "democratic")
+        std::cout << "Swarm demo: agents=" << swarm.total_agents()
+                  << ", governance=" << (swarm.governance_mode() == swarm::core::GovernanceMode::alpha_led ? "alpha-led" : "democratic")
+                  << ", chromosomes=" << swarm.first_chromosome().size() << '+' << swarm.second_chromosome().size()
                   << ", action=" << action_name(decision.action)
                   << ", fold=" << decision.action_scores[0]
                   << ", check_call=" << decision.action_scores[1]
