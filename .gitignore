@@ -1,3 +1,8 @@
 *.exe
-sanity.cpp
 build/
+*.log
+*.out
+*.err
+MEMORY.md
+memory/
+sanity.cpp
