@@ -27,12 +27,17 @@ public:
 
     [[nodiscard]] const Chromosome& first_chromosome() const noexcept;
     [[nodiscard]] const Chromosome& second_chromosome() const noexcept;
+    [[nodiscard]] std::uint64_t id() const noexcept;
     [[nodiscard]] std::size_t total_agents() const noexcept;
     [[nodiscard]] std::int64_t bankroll() const noexcept;
     [[nodiscard]] bool alive() const noexcept;
     [[nodiscard]] std::uint64_t hands_played() const noexcept;
     [[nodiscard]] std::uint64_t last_reproduction_hand() const noexcept;
     [[nodiscard]] std::uint32_t offspring_count() const noexcept;
+    [[nodiscard]] float average_risk_gene() const noexcept;
+    [[nodiscard]] float average_confidence_gene() const noexcept;
+    [[nodiscard]] float average_honesty_gene() const noexcept;
+    [[nodiscard]] float average_skepticism_gene() const noexcept;
 
     void add_bankroll(std::int64_t amount);
     void remove_bankroll(std::int64_t amount);
@@ -42,8 +47,11 @@ public:
     void mark_dead() noexcept;
 
 private:
+    static std::uint64_t next_id_;
+
     Chromosome first_chromosome_;
     Chromosome second_chromosome_;
+    std::uint64_t id_ = 0;
     std::int64_t bankroll_ = 0;
     bool alive_ = true;
     std::uint64_t hands_played_ = 0;

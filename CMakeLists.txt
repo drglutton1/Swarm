@@ -18,7 +18,10 @@ set(CORE_SOURCES
     src/evolution/lifecycle.cpp
     src/evolution/reproduction.cpp
     src/evolution/mutation.cpp
-    src/evolution/crossover.cpp)
+    src/evolution/crossover.cpp
+    src/social/face.cpp
+    src/social/info_exchange.cpp
+    src/social/mate_selection.cpp)
 
 add_library(swarm_core ${CORE_SOURCES})
 target_include_directories(swarm_core PUBLIC src)

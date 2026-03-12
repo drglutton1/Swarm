@@ -9,6 +9,8 @@
 #include "poker/table.h"
 #include "util/rng.h"
 #include "evolution/lifecycle.h"
+#include "social/face.h"
+#include "social/info_exchange.h"
 
 namespace {
 
@@ -87,13 +89,18 @@ int main(int argc, char** argv) {
         swarm.set_hands_played(15000);
         const auto decision = swarm.decide(ocean, sample_state, 1);
         const auto lifecycle = swarm::evolution::evaluate(swarm);
+        const auto face = swarm::social::make_public_face(swarm);
+        const auto private_bankroll = swarm::social::request_private_info(swarm, swarm, swarm::social::PrivateInfoField::bankroll, rng);
 
-        std::cout << "Swarm demo: agents=" << swarm.total_agents()
+        std::cout << "Swarm demo: id=" << swarm.id()
+                  << ", agents=" << swarm.total_agents()
                   << ", governance=" << (swarm.governance_mode() == swarm::core::GovernanceMode::alpha_led ? "alpha-led" : "democratic")
                   << ", bankroll=" << swarm.bankroll()
                   << ", phase=" << phase_name(lifecycle.phase)
                   << ", reproduction_ready=" << (lifecycle.reproduction_window_open ? "true" : "false")
                   << ", chromosomes=" << swarm.first_chromosome().size() << '+' << swarm.second_chromosome().size()
+                  << ", public_honesty=" << face.self_reported_honesty
+                  << ", private_bankroll_answer=" << (private_bankroll.refused ? -1.0 : private_bankroll.reported_value)
                   << ", action=" << action_name(decision.action)
                   << ", fold=" << decision.action_scores[0]
                   << ", check_call=" << decision.action_scores[1]

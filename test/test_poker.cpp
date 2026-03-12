@@ -11,6 +11,9 @@
 #include "../src/economy/transfer.h"
 #include "../src/evolution/lifecycle.h"
 #include "../src/evolution/reproduction.h"
+#include "../src/social/face.h"
+#include "../src/social/info_exchange.h"
+#include "../src/social/mate_selection.h"
 #include "../src/poker/hand_evaluator.h"
 #include "../src/poker/table.h"
 #include "../src/util/rng.h"
@@ -39,12 +42,46 @@ swarm::core::Chromosome make_chromosome(std::size_t agent_count, std::size_t sta
     return swarm::core::Chromosome::spawn_from_blueprint(genome, agent_count, config, ocean_size);
 }
 
+swarm::core::Chromosome make_chromosome_with_genes(
+    std::size_t agent_count,
+    std::size_t state_size,
+    std::uint32_t ocean_size,
+    swarm::util::Rng& rng,
+    float honesty_gene,
+    float skepticism_gene,
+    float confidence_gene = 0.5f,
+    float risk_gene = 0.5f) {
+    const swarm::core::DecoderConfig config{state_size, 4, 3};
+    auto genome = swarm::core::Genome::random(state_size, ocean_size, rng, static_cast<std::uint32_t>(agent_count));
+    genome.honesty_gene = honesty_gene;
+    genome.skepticism_gene = skepticism_gene;
+    genome.confidence_gene = confidence_gene;
+    genome.risk_gene = risk_gene;
+    return swarm::core::Chromosome::spawn_from_blueprint(genome, agent_count, config, ocean_size);
+}
+
 swarm::core::Swarm make_swarm(std::size_t first_agents, std::size_t second_agents, swarm::util::Rng& rng) {
     constexpr std::size_t state_size = 6;
     constexpr std::uint32_t ocean_size = 512;
     return swarm::core::Swarm(
         make_chromosome(first_agents, state_size, ocean_size, rng),
         make_chromosome(second_agents, state_size, ocean_size, rng),
+        swarm::core::Swarm::starting_bankroll);
+}
+
+swarm::core::Swarm make_social_swarm(
+    std::size_t first_agents,
+    std::size_t second_agents,
+    swarm::util::Rng& rng,
+    float honesty_gene,
+    float skepticism_gene,
+    float confidence_gene = 0.5f,
+    float risk_gene = 0.5f) {
+    constexpr std::size_t state_size = 6;
+    constexpr std::uint32_t ocean_size = 512;
+    return swarm::core::Swarm(
+        make_chromosome_with_genes(first_agents, state_size, ocean_size, rng, honesty_gene, skepticism_gene, confidence_gene, risk_gene),
+        make_chromosome_with_genes(second_agents, state_size, ocean_size, rng, honesty_gene, skepticism_gene, confidence_gene, risk_gene),
         swarm::core::Swarm::starting_bankroll);
 }
 
@@ -345,6 +382,76 @@ void test_offspring_is_structurally_valid_and_starts_correctly() {
     require(odd_parent.last_reproduction_hand() == odd_parent.hands_played(), "second parent reproduction timestamp updated");
 }
 
+void test_social_info_exchange_truthful_vs_deceptive() {
+    swarm::util::Rng truthful_rng(123);
+    swarm::util::Rng deceptive_rng(456);
+    auto requester = make_social_swarm(2, 2, truthful_rng, 0.5f, 0.2f);
+    auto truthful = make_social_swarm(2, 3, truthful_rng, 1.0f, 0.2f);
+    auto deceptive = make_social_swarm(2, 3, deceptive_rng, 0.0f, 0.2f, 0.6f, 0.9f);
+    truthful.set_hands_played(20000);
+    deceptive.set_hands_played(20000);
+    deceptive.add_bankroll(3000);
+
+    const auto honest_answer = swarm::social::request_private_info(requester, truthful, swarm::social::PrivateInfoField::bankroll, truthful_rng);
+    require(!honest_answer.refused, "fully honest swarm answers bankroll request");
+    require(honest_answer.truthful, "fully honest swarm answers truthfully");
+    require(std::fabs(honest_answer.reported_value - honest_answer.actual_value) < 0.0001, "truthful answer matches reality");
+
+    const auto lie = swarm::social::request_private_info(requester, deceptive, swarm::social::PrivateInfoField::bankroll, deceptive_rng);
+    require(!lie.refused, "dishonest swarm lies instead of refusing under test seed");
+    require(!lie.truthful, "dishonest swarm can lie");
+    require(std::fabs(lie.reported_value - lie.actual_value) > 0.001, "deceptive answer differs from reality");
+}
+
+void test_social_skepticism_changes_interpretation() {
+    swarm::util::Rng rng(789);
+    auto gullible = make_social_swarm(2, 2, rng, 0.5f, 0.0f);
+    auto skeptical = make_social_swarm(2, 2, rng, 0.5f, 1.0f);
+
+    swarm::social::InfoResponse lie;
+    lie.actual_value = 5000.0;
+    lie.reported_value = 9000.0;
+
+    const auto gullible_view = swarm::social::interpret_response(gullible, lie);
+    const auto skeptical_view = swarm::social::interpret_response(skeptical, lie);
+
+    require(std::fabs(gullible_view.believed_value - 9000.0) < 0.0001, "zero skepticism fully trusts reported value");
+    require(std::fabs(skeptical_view.believed_value - 5000.0) < 0.0001, "max skepticism falls back to baseline actual value");
+    require(gullible_view.trust_weight > skeptical_view.trust_weight, "skepticism lowers trust weight");
+}
+
+void test_mate_selection_respects_eligibility_and_parity() {
+    swarm::util::Rng rng(2468);
+    auto seeker = make_social_swarm(2, 2, rng, 0.5f, 0.2f);
+    auto best = make_social_swarm(2, 3, rng, 0.9f, 0.1f);
+    auto same_parity = make_social_swarm(3, 3, rng, 0.9f, 0.1f);
+    auto immature = make_social_swarm(2, 3, rng, 0.9f, 0.1f);
+    auto dead = make_social_swarm(2, 3, rng, 0.9f, 0.1f);
+
+    seeker.set_hands_played(25000);
+    best.set_hands_played(25000);
+    same_parity.set_hands_played(25000);
+    immature.set_hands_played(5000);
+    dead.set_hands_played(25000);
+    dead.remove_bankroll(dead.bankroll());
+
+    best.add_bankroll(4000);
+
+    const auto best_bankroll = swarm::social::request_private_info(seeker, best, swarm::social::PrivateInfoField::bankroll, rng);
+    const auto best_ready = swarm::social::request_private_info(seeker, best, swarm::social::PrivateInfoField::reproductive_readiness, rng);
+
+    std::vector<const swarm::core::Swarm*> candidates{&same_parity, &immature, &dead, &best};
+    std::vector<swarm::social::SocialKnowledge> knowledge{
+        {swarm::social::make_public_face(same_parity), std::nullopt, std::nullopt, std::nullopt},
+        {swarm::social::make_public_face(immature), std::nullopt, std::nullopt, std::nullopt},
+        {swarm::social::make_public_face(dead), std::nullopt, std::nullopt, std::nullopt},
+        {swarm::social::make_public_face(best), swarm::social::interpret_response(seeker, best_bankroll), swarm::social::interpret_response(seeker, best_ready), std::nullopt}};
+
+    const auto selection = swarm::social::select_partner(seeker, candidates, knowledge);
+    require(selection.partner != nullptr, "at least one eligible partner selected");
+    require(selection.partner->id() == best.id(), "mate selection prefers eligible parity-compatible mature partner");
+}
+
 } // namespace
 
 int main() {
@@ -361,6 +468,9 @@ int main() {
     test_even_odd_pairing_is_enforced();
     test_invalid_parents_cannot_reproduce();
     test_offspring_is_structurally_valid_and_starts_correctly();
+    test_social_info_exchange_truthful_vs_deceptive();
+    test_social_skepticism_changes_interpretation();
+    test_mate_selection_respects_eligibility_and_parity();
     std::cout << "PASS: test_poker\n";
     return 0;
 }

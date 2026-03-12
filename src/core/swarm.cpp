@@ -6,7 +6,14 @@
 #include <vector>
 
 namespace swarm::core {
+
+std::uint64_t Swarm::next_id_ = 1;
+
 namespace {
+
+float mean_gene(const Chromosome& first, const Chromosome& second, float Genome::*member) {
+    return 0.5f * (first.blueprint().*member + second.blueprint().*member);
+}
 
 std::size_t pick_first_chromosome_size(std::size_t total_agents, swarm::util::Rng& rng) {
     std::vector<std::size_t> valid;
@@ -46,7 +53,7 @@ Decision merge_democratic(const Decision& first, const Decision& second) {
 } // namespace
 
 Swarm::Swarm(Chromosome first_chromosome, Chromosome second_chromosome, std::int64_t bankroll)
-    : first_chromosome_(std::move(first_chromosome)), second_chromosome_(std::move(second_chromosome)), bankroll_(bankroll) {
+    : first_chromosome_(std::move(first_chromosome)), second_chromosome_(std::move(second_chromosome)), id_(next_id_++), bankroll_(bankroll) {
     if (first_chromosome_.empty() || second_chromosome_.empty()) {
         throw std::invalid_argument("swarm requires both chromosomes");
     }
@@ -94,6 +101,10 @@ const Chromosome& Swarm::second_chromosome() const noexcept {
     return second_chromosome_;
 }
 
+std::uint64_t Swarm::id() const noexcept {
+    return id_;
+}
+
 std::size_t Swarm::total_agents() const noexcept {
     return first_chromosome_.size() + second_chromosome_.size();
 }
@@ -116,6 +127,22 @@ std::uint64_t Swarm::last_reproduction_hand() const noexcept {
 
 std::uint32_t Swarm::offspring_count() const noexcept {
     return offspring_count_;
+}
+
+float Swarm::average_risk_gene() const noexcept {
+    return mean_gene(first_chromosome_, second_chromosome_, &Genome::risk_gene);
+}
+
+float Swarm::average_confidence_gene() const noexcept {
+    return mean_gene(first_chromosome_, second_chromosome_, &Genome::confidence_gene);
+}
+
+float Swarm::average_honesty_gene() const noexcept {
+    return mean_gene(first_chromosome_, second_chromosome_, &Genome::honesty_gene);
+}
+
+float Swarm::average_skepticism_gene() const noexcept {
+    return mean_gene(first_chromosome_, second_chromosome_, &Genome::skepticism_gene);
 }
 
 void Swarm::add_bankroll(std::int64_t amount) {

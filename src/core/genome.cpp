@@ -48,6 +48,8 @@ Genome Genome::random(std::size_t state_size, std::uint32_t ocean_size, swarm::u
     genome.alpha_bias = static_cast<float>(rng.uniform_real(0.1, 0.95));
     genome.risk_gene = static_cast<float>(rng.uniform_real(0.1, 1.0));
     genome.confidence_gene = static_cast<float>(rng.uniform_real(0.1, 1.0));
+    genome.honesty_gene = static_cast<float>(rng.uniform_real(0.0, 1.0));
+    genome.skepticism_gene = static_cast<float>(rng.uniform_real(0.0, 1.0));
 
     genome.sensory_indices = make_ordered_indices(state_size, ocean_size, rng);
     genome.hidden_indices = make_ordered_indices(static_cast<std::size_t>(genome.hidden_units) * 2, ocean_size, rng);
@@ -66,6 +68,8 @@ Genome Genome::derive_agent_variant(std::size_t slot, std::uint32_t ocean_size) 
     variant.alpha_bias = std::clamp(alpha_bias + static_cast<float>(slot) * 0.03f, 0.0f, 1.0f);
     variant.risk_gene = std::clamp(risk_gene + static_cast<float>(slot % 3) * 0.05f, 0.0f, 1.0f);
     variant.confidence_gene = std::clamp(confidence_gene - static_cast<float>(slot % 2) * 0.04f, 0.0f, 1.0f);
+    variant.honesty_gene = std::clamp(honesty_gene - static_cast<float>(slot % 3) * 0.03f, 0.0f, 1.0f);
+    variant.skepticism_gene = std::clamp(skepticism_gene + static_cast<float>(slot % 3) * 0.03f, 0.0f, 1.0f);
     return variant;
 }
 

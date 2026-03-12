@@ -31,6 +31,12 @@ void mutate_genome(swarm::core::Genome& genome, std::uint32_t ocean_size, swarm:
     if (rng.uniform_real() < policy.meta_mutation_rate) {
         genome.confidence_gene = std::clamp(genome.confidence_gene + static_cast<float>(rng.uniform_real(-0.15, 0.15)), 0.0f, 1.0f);
     }
+    if (rng.uniform_real() < policy.meta_mutation_rate) {
+        genome.honesty_gene = std::clamp(genome.honesty_gene + static_cast<float>(rng.uniform_real(-0.15, 0.15)), 0.0f, 1.0f);
+    }
+    if (rng.uniform_real() < policy.meta_mutation_rate) {
+        genome.skepticism_gene = std::clamp(genome.skepticism_gene + static_cast<float>(rng.uniform_real(-0.15, 0.15)), 0.0f, 1.0f);
+    }
 
     if (rng.uniform_real() < policy.structural_mutation_rate) {
         const int next_hidden = static_cast<int>(genome.hidden_units) + rng.uniform_int(-1, 1);

@@ -21,6 +21,8 @@ struct Genome {
     float alpha_bias {0.5f};
     float risk_gene {0.5f};
     float confidence_gene {0.5f};
+    float honesty_gene {0.5f};
+    float skepticism_gene {0.5f};
 
     [[nodiscard]] bool empty() const noexcept;
     [[nodiscard]] std::size_t parameter_count() const noexcept;
