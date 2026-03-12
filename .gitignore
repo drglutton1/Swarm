@@ -6,3 +6,4 @@ build/
 MEMORY.md
 memory/
 sanity.cpp
+darwin_core.yaml
