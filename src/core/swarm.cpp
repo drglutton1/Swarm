@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace swarm::core {
 namespace {
@@ -104,6 +106,18 @@ bool Swarm::alive() const noexcept {
     return alive_;
 }
 
+std::uint64_t Swarm::hands_played() const noexcept {
+    return hands_played_;
+}
+
+std::uint64_t Swarm::last_reproduction_hand() const noexcept {
+    return last_reproduction_hand_;
+}
+
+std::uint32_t Swarm::offspring_count() const noexcept {
+    return offspring_count_;
+}
+
 void Swarm::add_bankroll(std::int64_t amount) {
     if (amount < 0) {
         throw std::invalid_argument("cannot add a negative bankroll amount");
@@ -119,6 +133,19 @@ void Swarm::remove_bankroll(std::int64_t amount) {
         throw std::invalid_argument("cannot remove more bankroll than available");
     }
     bankroll_ -= amount;
+}
+
+void Swarm::record_hands(std::uint64_t count) noexcept {
+    hands_played_ += count;
+}
+
+void Swarm::set_hands_played(std::uint64_t count) noexcept {
+    hands_played_ = count;
+}
+
+void Swarm::note_reproduction() noexcept {
+    last_reproduction_hand_ = hands_played_;
+    ++offspring_count_;
 }
 
 void Swarm::mark_dead() noexcept {

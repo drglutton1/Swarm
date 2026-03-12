@@ -8,6 +8,7 @@
 #include "core/swarm.h"
 #include "poker/table.h"
 #include "util/rng.h"
+#include "evolution/lifecycle.h"
 
 namespace {
 
@@ -24,6 +25,20 @@ const char* action_name(swarm::core::ActionType action) {
             return "check/call";
         case swarm::core::ActionType::raise:
             return "raise";
+    }
+    return "unknown";
+}
+
+const char* phase_name(swarm::evolution::LifePhase phase) {
+    switch (phase) {
+        case swarm::evolution::LifePhase::youth:
+            return "youth";
+        case swarm::evolution::LifePhase::maturity:
+            return "maturity";
+        case swarm::evolution::LifePhase::old_age:
+            return "old_age";
+        case swarm::evolution::LifePhase::dead:
+            return "dead";
     }
     return "unknown";
 }
@@ -69,11 +84,15 @@ int main(int argc, char** argv) {
         swarm::core::Swarm swarm = swarm::core::Swarm::random(static_cast<std::uint32_t>(ocean.size()), state_size, rng);
 
         const swarm::core::PokerStateVector sample_state{{0.65f, 0.30f, 0.55f, 0.10f, 0.75f, 0.40f}, 5.0f, 10.0f, 25.0f, 100.0f};
+        swarm.set_hands_played(15000);
         const auto decision = swarm.decide(ocean, sample_state, 1);
+        const auto lifecycle = swarm::evolution::evaluate(swarm);
 
         std::cout << "Swarm demo: agents=" << swarm.total_agents()
                   << ", governance=" << (swarm.governance_mode() == swarm::core::GovernanceMode::alpha_led ? "alpha-led" : "democratic")
                   << ", bankroll=" << swarm.bankroll()
+                  << ", phase=" << phase_name(lifecycle.phase)
+                  << ", reproduction_ready=" << (lifecycle.reproduction_window_open ? "true" : "false")
                   << ", chromosomes=" << swarm.first_chromosome().size() << '+' << swarm.second_chromosome().size()
                   << ", action=" << action_name(decision.action)
                   << ", fold=" << decision.action_scores[0]

@@ -14,7 +14,11 @@ set(CORE_SOURCES
     src/core/swarm.cpp
     src/economy/chip_manager.cpp
     src/economy/transfer.cpp
-    src/economy/inheritance.cpp)
+    src/economy/inheritance.cpp
+    src/evolution/lifecycle.cpp
+    src/evolution/reproduction.cpp
+    src/evolution/mutation.cpp
+    src/evolution/crossover.cpp)
 
 add_library(swarm_core ${CORE_SOURCES})
 target_include_directories(swarm_core PUBLIC src)

@@ -9,6 +9,8 @@
 #include "../src/economy/chip_manager.h"
 #include "../src/economy/inheritance.h"
 #include "../src/economy/transfer.h"
+#include "../src/evolution/lifecycle.h"
+#include "../src/evolution/reproduction.h"
 #include "../src/poker/hand_evaluator.h"
 #include "../src/poker/table.h"
 #include "../src/util/rng.h"
@@ -29,6 +31,21 @@ void require(bool condition, const char* message) {
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
+}
+
+swarm::core::Chromosome make_chromosome(std::size_t agent_count, std::size_t state_size, std::uint32_t ocean_size, swarm::util::Rng& rng) {
+    const swarm::core::DecoderConfig config{state_size, 4, 3};
+    auto genome = swarm::core::Genome::random(state_size, ocean_size, rng, static_cast<std::uint32_t>(agent_count));
+    return swarm::core::Chromosome::spawn_from_blueprint(genome, agent_count, config, ocean_size);
+}
+
+swarm::core::Swarm make_swarm(std::size_t first_agents, std::size_t second_agents, swarm::util::Rng& rng) {
+    constexpr std::size_t state_size = 6;
+    constexpr std::uint32_t ocean_size = 512;
+    return swarm::core::Swarm(
+        make_chromosome(first_agents, state_size, ocean_size, rng),
+        make_chromosome(second_agents, state_size, ocean_size, rng),
+        swarm::core::Swarm::starting_bankroll);
 }
 
 void test_hand_ordering() {
@@ -235,6 +252,99 @@ void test_economy_accounting_and_inheritance() {
     require(manager.chips_in_play() + manager.chips_burned() == manager.chips_injected(), "economy invariant still holds after full burn");
 }
 
+void test_lifecycle_phase_transitions() {
+    swarm::util::Rng rng(11);
+    auto swarm = make_swarm(2, 2, rng);
+
+    auto state = swarm::evolution::evaluate(swarm);
+    require(state.phase == swarm::evolution::LifePhase::youth, "new swarm starts in youth");
+    require(!state.reproduction_window_open, "youth cannot reproduce");
+
+    swarm.set_hands_played(10000);
+    state = swarm::evolution::evaluate(swarm);
+    require(state.phase == swarm::evolution::LifePhase::maturity, "swarm enters maturity at 10k hands");
+    require(state.reproduction_window_open, "mature swarm can reproduce when eligible");
+
+    swarm.set_hands_played(90000);
+    state = swarm::evolution::evaluate(swarm);
+    require(state.phase == swarm::evolution::LifePhase::old_age, "swarm enters old age at 90k hands");
+    require(!state.reproduction_window_open, "old age reproduction is disabled");
+
+    swarm.set_hands_played(100000);
+    state = swarm::evolution::evaluate(swarm);
+    require(state.phase == swarm::evolution::LifePhase::dead, "swarm dies at 100k hands");
+    require(!state.alive, "dead state is not alive");
+}
+
+void test_even_odd_pairing_is_enforced() {
+    swarm::util::Rng rng(22);
+    auto even_swarm = make_swarm(2, 2, rng);
+    auto odd_swarm = make_swarm(2, 3, rng);
+    auto even_swarm_two = make_swarm(3, 3, rng);
+
+    even_swarm.set_hands_played(20000);
+    odd_swarm.set_hands_played(20000);
+    even_swarm_two.set_hands_played(20000);
+
+    require(swarm::evolution::pairing_parity_allowed(even_swarm, odd_swarm), "even plus odd pairing allowed");
+    require(!swarm::evolution::pairing_parity_allowed(even_swarm, even_swarm_two), "even plus even pairing rejected");
+}
+
+void test_invalid_parents_cannot_reproduce() {
+    swarm::util::Rng rng(33);
+    auto youth = make_swarm(2, 2, rng);
+    auto mature = make_swarm(2, 3, rng);
+    mature.set_hands_played(20000);
+
+    auto result = swarm::evolution::reproduce(youth, mature, 6, 512, rng);
+    require(!result.success, "youth parent cannot reproduce");
+
+    youth.set_hands_played(20000);
+    youth.note_reproduction();
+    youth.record_hands(1000);
+    result = swarm::evolution::reproduce(youth, mature, 6, 512, rng);
+    require(!result.success, "cooldown blocks reproduction");
+
+    auto bankrupt = make_swarm(2, 2, rng);
+    bankrupt.set_hands_played(20000);
+    bankrupt.remove_bankroll(bankrupt.bankroll());
+    result = swarm::evolution::reproduce(bankrupt, mature, 6, 512, rng);
+    require(!result.success, "dead bankroll parent cannot reproduce");
+}
+
+void test_offspring_is_structurally_valid_and_starts_correctly() {
+    swarm::util::Rng rng(44);
+    auto even_parent = make_swarm(2, 2, rng);
+    auto odd_parent = make_swarm(2, 3, rng);
+    even_parent.set_hands_played(30000);
+    odd_parent.set_hands_played(32000);
+
+    swarm::evolution::ReproductionPolicy policy;
+    policy.crossover.crossover_probability = 1.0;
+    policy.mutation.point_mutation_rate = 1.0;
+    policy.mutation.meta_mutation_rate = 1.0;
+    policy.mutation.structural_mutation_rate = 1.0;
+
+    const auto result = swarm::evolution::reproduce(even_parent, odd_parent, 6, 512, rng, policy);
+    require(result.success, "valid parents produce offspring");
+    require(result.offspring.has_value(), "offspring returned");
+
+    const auto& child = *result.offspring;
+    require(child.bankroll() == swarm::core::Swarm::starting_bankroll, "offspring starts with 5000 bankroll");
+    require(child.alive(), "offspring starts alive");
+    require(child.hands_played() == 0, "offspring starts at zero hands played");
+    require(child.first_chromosome().size() >= 2 && child.first_chromosome().size() <= 9, "offspring first chromosome size valid");
+    require(child.second_chromosome().size() >= 2 && child.second_chromosome().size() <= 9, "offspring second chromosome size valid");
+    require(child.total_agents() >= 4 && child.total_agents() <= 18, "offspring total agents valid");
+    require(child.first_chromosome().blueprint().chromosome_agent_count == child.first_chromosome().size(), "offspring first blueprint count matches size");
+    require(child.second_chromosome().blueprint().chromosome_agent_count == child.second_chromosome().size(), "offspring second blueprint count matches size");
+    require(!child.first_chromosome().blueprint().sensory_indices.empty(), "offspring first blueprint keeps sensory structure");
+    require(!child.second_chromosome().blueprint().action_indices.empty(), "offspring second blueprint keeps action structure");
+    require(even_parent.offspring_count() == 1 && odd_parent.offspring_count() == 1, "parents record offspring count");
+    require(even_parent.last_reproduction_hand() == even_parent.hands_played(), "first parent reproduction timestamp updated");
+    require(odd_parent.last_reproduction_hand() == odd_parent.hands_played(), "second parent reproduction timestamp updated");
+}
+
 } // namespace
 
 int main() {
@@ -247,6 +357,10 @@ int main() {
     test_swarm_birth_and_governance_invariants();
     test_random_swarm_decisions();
     test_economy_accounting_and_inheritance();
+    test_lifecycle_phase_transitions();
+    test_even_odd_pairing_is_enforced();
+    test_invalid_parents_cannot_reproduce();
+    test_offspring_is_structurally_valid_and_starts_correctly();
     std::cout << "PASS: test_poker\n";
     return 0;
 }

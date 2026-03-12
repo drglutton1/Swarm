@@ -1,58 +1,68 @@
 # Swarm Poker Ecosystem - Status
 
-## Stage A / Phase 3
+## Stage A / Phase 4
 
-Status: **verified milestone complete** for the first economy substrate pass. Phase 1 poker remains intact, Phase 2 swarm/core structure remains intact, and Phase 3 now introduces real chip accounting, swarm bankroll state, neutral inter-swarm transfers, and inheritance rules tied to swarm death.
+Status: **verified milestone complete** for the first lifecycle/evolution substrate pass. Phase 1 poker still builds and passes, Phase 2 core swarm/entity structure is still in place, Phase 3 economy remains intact, and Phase 4 now adds explicit lifecycle evaluation, constrained reproduction, and simple but real mutation/crossover plumbing.
 
-## What Phase 3 now covers
+## What Phase 4 now covers
 
-This milestone now implements an honest economy layer under `src/economy`:
-- **Chip accounting framework** via `ChipManager`:
-  - tracks **chips injected**
-  - tracks **chips burned**
-  - tracks **chips in play**
-  - enforces the invariant **chips_in_play + chips_burned = chips_injected**
-- **Starting bankroll model**:
-  - every new random swarm now starts with **5000 chips**
-- **Transfers** via `TransferService`:
-  - validates source/destination are different swarms
-  - rejects non-positive transfers
-  - rejects transfers that exceed source bankroll
-  - rejects transfers involving dead swarms
-  - preserves global accounting neutrality
-- **Inheritance** via `InheritanceService`:
-  - on death with living offspring: **50% burned, 50% distributed across living offspring**
-  - on death with zero living offspring: **100% burned**
-  - dead or null offspring are filtered out
-  - policy is structured behind an `InheritancePolicy` interface so future parent-donation rules can extend the same flow cleanly
+This milestone now implements an honest evolution layer under `src/evolution`:
+- **Lifecycle model** via `LifecyclePolicy` and `evaluate()`:
+  - **youth** for swarms below **10,000 hands**
+  - **maturity** from **10,000** up to **90,000 hands**
+  - **old age** from **90,000** up to **100,000 hands**
+  - **death** when a swarm reaches **100,000 hands** or bankroll drops to **0 or below**
+- **Reproduction gating**:
+  - requires both parents to be **alive**
+  - requires both parents to be in **maturity**
+  - enforces a per-parent **cooldown** in hands between births
+  - enforces a per-parent **offspring cap**
+- **Pairing rule** via `pairing_parity_allowed()`:
+  - only **even-sized swarm × odd-sized swarm** pairings are allowed
+- **Offspring construction** via `reproduce()`:
+  - each parent contributes **one chromosome**
+  - offspring receives **two chromosomes total**
+  - offspring starts with bankroll **5000**
+  - parent reproduction timestamps/counters are updated on success
+- **Mutation layer** via `mutate_genome()` and `mutate_chromosome()`:
+  - point mutation hooks for genome index vectors
+  - meta mutation hooks for scalar genes like alpha/risk/confidence
+  - structural mutation hooks for hidden-unit count, ocean radius, and chromosome agent count
+- **Crossover layer** via `maybe_crossover()`:
+  - low-probability recombination between the two inherited chromosome blueprints before offspring instantiation
 
 ## What changed in this milestone
 
-- added `src/economy/chip_manager.h/.cpp`
-- added `src/economy/transfer.h/.cpp`
-- added `src/economy/inheritance.h/.cpp`
-- updated `src/core/swarm.h/.cpp` so swarms now carry bankroll and alive/dead state
-- updated `src/main.cpp` demo output to print swarm bankroll
-- updated `test/test_poker.cpp` with economy scenario coverage
-- updated `CMakeLists.txt` to build the new economy sources
+- added `src/evolution/lifecycle.h/.cpp`
+- added `src/evolution/reproduction.h/.cpp`
+- added `src/evolution/mutation.h/.cpp`
+- added `src/evolution/crossover.h/.cpp`
+- updated `src/core/swarm.h/.cpp` so swarms now track:
+  - hands played
+  - last reproduction hand
+  - offspring count
+- updated `src/main.cpp` demo output to show lifecycle phase and reproduction readiness
+- updated `test/test_poker.cpp` with lifecycle/evolution coverage
+- updated `CMakeLists.txt` to compile the evolution sources
 
 ## Invariants now enforced
 
-The implementation now enforces these economy rules in code/tests:
-- every random swarm starts with **5000 chips**
-- chip injections increase both **injected** and **in play**
-- burns decrease **in play** and increase **burned**
-- transfers move chips between swarms without changing global totals
-- inheritance only pays living offspring
-- inheritance marks the deceased swarm dead after processing
-- the global accounting identity **chips_in_play + chips_burned = chips_injected** holds across a mixed scenario of injections, transfers, and inheritance events
+The implementation now enforces these lifecycle/evolution rules in code/tests:
+- swarms below **10,000 hands** are in youth and cannot reproduce
+- swarms from **10,000** to below **90,000 hands** are mature and may reproduce only if cooldown/cap checks pass
+- swarms from **90,000** to below **100,000 hands** are old and cannot reproduce
+- swarms at **100,000 hands** are dead
+- swarms with bankroll **<= 0** are treated as dead by lifecycle evaluation
+- reproduction rejects pairings unless one parent swarm size is even and the other is odd
+- reproduction rejects invalid parents that are dead, too young, too old, still on cooldown, or over cap
+- successful offspring always have two realized chromosomes, valid chromosome sizes, valid total swarm size, and the standard starting bankroll
 
 ## Local verification performed
 
 ### Build commands
 
-- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc src/main.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp -o swarm_poker_sim.exe`
-- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp -o test_poker.exe`
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc src/main.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp -o swarm_poker_sim.exe`
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp -o test_poker.exe`
 
 ### Test command
 
@@ -66,33 +76,39 @@ The implementation now enforces these economy rules in code/tests:
   - ocean substrate behavior
   - swarm birth/governance invariants
   - 200 random valid swarm decisions
-  - economy accounting identity under injections, transfers, partial-burn inheritance, and full-burn inheritance
+  - economy accounting identity under injections, transfers, and inheritance
+  - lifecycle phase transitions
+  - even×odd reproduction pairing enforcement
+  - invalid parent rejection for youth, cooldown, and dead-bankroll cases
+  - structurally valid offspring creation with correct initial state
 
 ### Runtime sanity run
 
 - `swarm_poker_sim.exe --hands 10 --quiet`
-- The executable prints one sample swarm decision, now including bankroll, and then the poker summary.
+- The executable now prints one sample swarm decision plus lifecycle phase/reproduction readiness, then the poker summary.
 
 ## Honest current limitations
 
-Still intentionally deferred after this first economy pass:
-- no automatic coupling yet between the poker table chip flow and swarm bankrolls
-- no full lifecycle engine yet for reproduction, offspring creation, or population turnover
-- inheritance currently works on explicitly supplied offspring references rather than a persistent family graph
-- inheritance payouts are integer chip splits; when exact division is impossible, remainder chips are distributed deterministically to the earliest living offspring rather than introducing fractional chips
-- the `InheritancePolicy` abstraction is in place, but parent-donation and richer lineage rules are not implemented yet
-- no persistent simulation loop yet that advances swarms through play, reproduction, death, and wealth transfer over generations
+Still intentionally deferred after this first lifecycle/evolution pass:
+- there is **no population scheduler yet** that automatically advances all swarms through hands, pairing, birth, and death
+- there is **no mating preference or social layer yet** beyond the explicit even×odd pairing rule
+- reproduction currently returns a newly created offspring swarm, but does **not** register it into a persistent population graph or inheritance family tree
+- crossover is intentionally simple and blueprint-level rather than a richer per-locus biological model
+- mutation hooks are real and testable, but still modest; they do not yet model richer gene semantics or multi-step developmental constraints
+- lifecycle death evaluation is available and usable now, but it is **not yet wired into a full world loop** that continuously applies mortality/inheritance/reproduction across generations
+- poker outcomes are still not coupled to swarm lifecycle progression beyond the shared bankroll concept and explicit hand counters stored on each swarm
 
 ## Readiness
 
-**Yes, this is now a truthful start to Phase 3.** The project now has:
-1. swarm-level bankroll state
-2. explicit global chip accounting
-3. validated neutral transfers between swarms
-4. inheritance rules with burning and offspring distribution
-5. tests proving the accounting identity under mixed economy events
+**Yes, this is now a truthful start to Phase 4.** The project now has:
+1. explicit lifecycle phase evaluation
+2. mature-only reproduction with cooldown and offspring-cap gates
+3. enforced even×odd swarm pairing
+4. offspring construction from one chromosome per parent
+5. simple real mutation/crossover hooks for later evolution work
+6. tests proving lifecycle transitions and reproduction constraints
 
 Recommended next step:
-1. connect swarm bankrolls to actual poker outcomes
-2. introduce persistent population bookkeeping for parent/offspring relationships
-3. then layer reproduction/death scheduling and evolutionary turnover onto this economy substrate
+1. add a persistent population manager or scheduler that advances hands and attempts pairings
+2. connect lifecycle death with inheritance/family bookkeeping automatically
+3. then layer social/mating preferences and longer-run generational simulation onto this substrate
