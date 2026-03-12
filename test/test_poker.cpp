@@ -6,6 +6,9 @@
 
 #include "../src/core/ocean.h"
 #include "../src/core/swarm.h"
+#include "../src/economy/chip_manager.h"
+#include "../src/economy/inheritance.h"
+#include "../src/economy/transfer.h"
 #include "../src/poker/hand_evaluator.h"
 #include "../src/poker/table.h"
 #include "../src/util/rng.h"
@@ -127,6 +130,8 @@ void test_swarm_birth_and_governance_invariants() {
         require(swarm.second_chromosome().blueprint().chromosome_agent_count == swarm.second_chromosome().size(), "second chromosome blueprint matches realized count");
         require(!swarm.first_chromosome().blueprint().sensory_indices.empty(), "first chromosome blueprint has sensory indices");
         require(!swarm.second_chromosome().blueprint().action_indices.empty(), "second chromosome blueprint has action indices");
+        require(swarm.bankroll() == swarm::core::Swarm::starting_bankroll, "random swarm starts with standard bankroll");
+        require(swarm.alive(), "random swarm starts alive");
 
         const auto expected_mode = (swarm.total_agents() % 2 == 1)
             ? swarm::core::GovernanceMode::alpha_led
@@ -171,6 +176,65 @@ void test_random_swarm_decisions() {
     }
 }
 
+void test_economy_accounting_and_inheritance() {
+    swarm::util::Rng rng(20260312);
+    constexpr std::size_t state_size = 6;
+
+    auto founder = swarm::core::Swarm::random(512, state_size, rng);
+    auto child_a = swarm::core::Swarm::random(512, state_size, rng);
+    auto child_b = swarm::core::Swarm::random(512, state_size, rng);
+    auto child_c = swarm::core::Swarm::random(512, state_size, rng);
+
+    founder.remove_bankroll(founder.bankroll());
+    child_a.remove_bankroll(child_a.bankroll());
+    child_b.remove_bankroll(child_b.bankroll());
+    child_c.remove_bankroll(child_c.bankroll());
+
+    swarm::economy::ChipManager manager;
+    manager.inject(founder, swarm::core::Swarm::starting_bankroll);
+    manager.inject(child_a, swarm::core::Swarm::starting_bankroll);
+    manager.inject(child_b, swarm::core::Swarm::starting_bankroll);
+    manager.inject(child_c, swarm::core::Swarm::starting_bankroll);
+    require(manager.chips_injected() == 20000, "chip manager tracks total injected chips");
+    require(manager.chips_in_play() == 20000, "all injected chips start in play");
+
+    const auto transfer_one = swarm::economy::TransferService::execute(founder, child_a, 1200, manager);
+    const auto transfer_two = swarm::economy::TransferService::execute(child_b, child_c, 700, manager);
+    require(transfer_one.amount == 1200, "transfer records amount");
+    require(transfer_two.amount == 700, "second transfer records amount");
+    require(manager.chips_in_play() == 20000, "transfers are accounting-neutral");
+
+    child_b.mark_dead();
+    const auto inheritance = swarm::economy::InheritanceService::distribute_on_death(
+        founder,
+        std::vector<swarm::core::Swarm*>{&child_a, &child_b, &child_c},
+        manager);
+
+    require(!founder.alive(), "founder marked dead after inheritance event");
+    require(child_b.bankroll() == 4300, "unrelated dead offspring keeps prior bankroll untouched");
+    require(inheritance.starting_bankroll == 3800, "inheritance sees founder post-transfer bankroll");
+    require(inheritance.burned == 1900, "inheritance burns half when living offspring exist");
+    require(inheritance.distributed == 1900, "remaining half distributed to living offspring");
+    require(inheritance.payouts.size() == 2, "only living offspring receive payouts");
+    require(inheritance.payouts[0] == 950 && inheritance.payouts[1] == 950, "living offspring split inheritance equally");
+    require(child_a.bankroll() == 7150, "first living child receives inheritance payout");
+    require(child_c.bankroll() == 6650, "second living child receives inheritance payout");
+    require(manager.chips_burned() == 1900, "burned chips tracked after inheritance");
+    require(manager.chips_in_play() == 18100, "chips in play reduced only by burned amount");
+    require(manager.invariants_hold(), "economy invariant holds after transfer and inheritance scenario");
+    require(manager.chips_in_play() + manager.chips_burned() == manager.chips_injected(), "core economy identity holds");
+
+    auto lone_parent = swarm::core::Swarm::random(512, state_size, rng);
+    lone_parent.remove_bankroll(lone_parent.bankroll());
+    manager.inject(lone_parent, swarm::core::Swarm::starting_bankroll);
+    const auto no_offspring = swarm::economy::InheritanceService::distribute_on_death(lone_parent, {}, manager);
+    require(no_offspring.burned == 5000, "no living offspring means full burn");
+    require(no_offspring.distributed == 0, "no offspring means no payouts");
+    require(manager.chips_burned() == 6900, "burn total accumulates across multiple deaths");
+    require(manager.chips_in_play() == 18100, "full-burn death removes all newly injected chips from play");
+    require(manager.chips_in_play() + manager.chips_burned() == manager.chips_injected(), "economy invariant still holds after full burn");
+}
+
 } // namespace
 
 int main() {
@@ -182,6 +246,7 @@ int main() {
     test_ocean_substrate_behavior();
     test_swarm_birth_and_governance_invariants();
     test_random_swarm_decisions();
+    test_economy_accounting_and_inheritance();
     std::cout << "PASS: test_poker\n";
     return 0;
 }

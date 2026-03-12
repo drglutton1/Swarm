@@ -43,13 +43,16 @@ Decision merge_democratic(const Decision& first, const Decision& second) {
 
 } // namespace
 
-Swarm::Swarm(Chromosome first_chromosome, Chromosome second_chromosome)
-    : first_chromosome_(std::move(first_chromosome)), second_chromosome_(std::move(second_chromosome)) {
+Swarm::Swarm(Chromosome first_chromosome, Chromosome second_chromosome, std::int64_t bankroll)
+    : first_chromosome_(std::move(first_chromosome)), second_chromosome_(std::move(second_chromosome)), bankroll_(bankroll) {
     if (first_chromosome_.empty() || second_chromosome_.empty()) {
         throw std::invalid_argument("swarm requires both chromosomes");
     }
     if (total_agents() < 4 || total_agents() > 18) {
         throw std::invalid_argument("swarm must contain 4 to 18 total agents");
+    }
+    if (bankroll_ < 0) {
+        throw std::invalid_argument("swarm bankroll cannot be negative");
     }
 }
 
@@ -64,7 +67,8 @@ Swarm Swarm::random(std::uint32_t ocean_size, std::size_t state_size, swarm::uti
 
     return Swarm(
         Chromosome::spawn_from_blueprint(first_blueprint, first_size, config, ocean_size),
-        Chromosome::spawn_from_blueprint(second_blueprint, second_size, config, ocean_size));
+        Chromosome::spawn_from_blueprint(second_blueprint, second_size, config, ocean_size),
+        starting_bankroll);
 }
 
 GovernanceMode Swarm::governance_mode() const noexcept {
@@ -90,6 +94,35 @@ const Chromosome& Swarm::second_chromosome() const noexcept {
 
 std::size_t Swarm::total_agents() const noexcept {
     return first_chromosome_.size() + second_chromosome_.size();
+}
+
+std::int64_t Swarm::bankroll() const noexcept {
+    return bankroll_;
+}
+
+bool Swarm::alive() const noexcept {
+    return alive_;
+}
+
+void Swarm::add_bankroll(std::int64_t amount) {
+    if (amount < 0) {
+        throw std::invalid_argument("cannot add a negative bankroll amount");
+    }
+    bankroll_ += amount;
+}
+
+void Swarm::remove_bankroll(std::int64_t amount) {
+    if (amount < 0) {
+        throw std::invalid_argument("cannot remove a negative bankroll amount");
+    }
+    if (amount > bankroll_) {
+        throw std::invalid_argument("cannot remove more bankroll than available");
+    }
+    bankroll_ -= amount;
+}
+
+void Swarm::mark_dead() noexcept {
+    alive_ = false;
 }
 
 } // namespace swarm::core

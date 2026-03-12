@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
 
         std::cout << "Swarm demo: agents=" << swarm.total_agents()
                   << ", governance=" << (swarm.governance_mode() == swarm::core::GovernanceMode::alpha_led ? "alpha-led" : "democratic")
+                  << ", bankroll=" << swarm.bankroll()
                   << ", chromosomes=" << swarm.first_chromosome().size() << '+' << swarm.second_chromosome().size()
                   << ", action=" << action_name(decision.action)
                   << ", fold=" << decision.action_scores[0]

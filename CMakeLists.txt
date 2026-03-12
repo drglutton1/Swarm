@@ -11,7 +11,10 @@ set(CORE_SOURCES
     src/core/decoder.cpp
     src/core/agent.cpp
     src/core/chromosome.cpp
-    src/core/swarm.cpp)
+    src/core/swarm.cpp
+    src/economy/chip_manager.cpp
+    src/economy/transfer.cpp
+    src/economy/inheritance.cpp)
 
 add_library(swarm_core ${CORE_SOURCES})
 target_include_directories(swarm_core PUBLIC src)
