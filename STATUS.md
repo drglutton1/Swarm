@@ -2,9 +2,11 @@
 
 ## Stage A / Phase 5
 
-Status: **verified milestone still complete, with curator corrective pass applied before Phase 6**.
+Status: **verified milestone still complete, with the pre-Phase-6 governance/RNG hardening pass now applied on top of the curator corrective pass**.
 
-The repo still includes the first social-layer substrate from Phase 5, but the important change in this pass is that the poker/evolution substrate has been corrected where the curator flagged real spec and rules issues.
+The repo still includes the first social-layer substrate from Phase 5. At this point the codebase has both:
+- the earlier poker/spec corrective repair, and
+- the follow-up pre-Phase-6 hardening pass for alpha-led governance and deterministic RNG infrastructure.
 
 ## Corrective pass completed
 
@@ -42,6 +44,39 @@ Implemented:
   - second chromosome size = `randint(2,9)`
   - total swarm size = their sum
 
+## Additional pre-Phase-6 hardening pass completed
+
+### PASS 3 — Alpha-led governance now uses advisors instead of a lone first agent
+
+Implemented:
+
+- **Alpha-led mode no longer returns `dominant.agents().front()` directly**
+  - the alpha still owns the final call
+  - but that call is now blended with two advisor channels:
+    - the dominant chromosome's non-alpha agents
+    - the other chromosome's aggregate recommendation
+- advisor signals are confidence-weighted and normalized before feeding into the alpha decision
+- democratic mode remains separate and still merges chromosome-level aggregates evenly
+- added targeted tests showing:
+  - alpha-led outputs change when advisor composition changes
+  - alpha-led remains behaviorally distinct from democratic aggregation
+
+### PASS 4 — RNG modernization
+
+Implemented:
+
+- replaced `std::mt19937_64` with a compact **xoshiro256**-style generator seeded through **splitmix64**
+- added a cleaner coherent API:
+  - `next_u64()`
+  - `next_u32()`
+  - `next_float()`
+  - `next_double()`
+  - `next_int(min, max)`
+  - `next_real(min, max)`
+- kept compatibility wrappers so existing call sites using `uniform_int` / `uniform_real` still work
+- kept deterministic seeding behavior and deterministic shuffle behavior
+- added regression coverage for seed reproducibility, bounded integer/float output, and same-seed shuffle reproducibility
+
 ## Files changed in this corrective pass
 
 - `src/poker/table.h`
@@ -57,8 +92,12 @@ Implemented:
   - crossover default set to 0.01
 - `src/core/swarm.cpp`
   - swarm birth distribution changed to independent 2..9 chromosome draws
+  - alpha-led governance now aggregates advisor pressure instead of using only the first dominant agent
+- `src/util/rng.h`
+  - RNG upgraded to compact splitmix64-seeded xoshiro256** engine with coherent next_* API and deterministic shuffle
 - `test/test_poker.cpp`
   - added regression coverage for curator-requested cases
+  - added focused alpha-led governance and RNG reproducibility/range tests
 
 ## Verification performed
 
@@ -75,6 +114,8 @@ Implemented:
   - Result: runs successfully
   - Sample result from local verification: `hands=10`, `rake=30`, `chips_ok=true`
 
+These were re-run after the governance/RNG hardening pass with MinGW g++ and still pass locally.
+
 ### Regression coverage now includes
 
 - uneven all-in **side-pot** resolution
@@ -84,6 +125,8 @@ Implemented:
 - reproduction cooldown default = **10000**
 - crossover default = **0.01**
 - swarm birth distribution invariants under the new `2..9 + 2..9` rule
+- alpha-led advisor influence and democratic-vs-alpha-led distinction
+- RNG seeded reproducibility, output ranges, and deterministic shuffle behavior
 
 ## Honest current limitations
 
@@ -99,6 +142,12 @@ Still true:
 
 ## Readiness
 
-**Yes — the project now looks ready for the next governance/RNG follow-up pass.**
+**Yes — the repo now looks genuinely ready to begin Phase 6, with the specific governance/RNG follow-up items addressed and locally verified.**
 
-Reason: the curator-blocking poker correctness and spec-default mismatches called out in this pass have been addressed and locally verified, so Phase 6 should no longer be built on top of the previously known side-pot / betting-flow / default-value errors.
+Reason:
+- curator-blocking poker/spec issues were already repaired
+- alpha-led governance is no longer a single-agent shortcut and now has a real advisor aggregation path
+- RNG infrastructure is faster, deterministic, and coherent enough to support wider use across core / poker / evolution / social code
+- local build + regression verification still pass after these changes
+
+Honest caveat: this is still a compact research simulation codebase, not a production poker engine or fully mature governance laboratory. But the known pre-Phase-6 follow-up concerns from review are now covered well enough that Phase 6 work should not have to start on top of the previous governance/RNG shortcuts.

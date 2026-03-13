@@ -42,6 +42,95 @@ swarm::core::Chromosome make_chromosome(std::size_t agent_count, std::size_t sta
     return swarm::core::Chromosome::spawn_from_blueprint(genome, agent_count, config, ocean_size);
 }
 
+swarm::core::Genome make_scripted_genome(
+    std::uint32_t dominant_action_slot,
+    float alpha_bias,
+    float confidence_gene,
+    float risk_gene,
+    float base_strength = 6.0f,
+    float confidence_signal = 4.0f,
+    float raise_signal = 3.0f) {
+    swarm::core::Genome genome;
+    genome.hidden_units = 1;
+    genome.action_count = 3;
+    genome.ocean_window_radius = 1;
+    genome.chromosome_agent_count = 1;
+    genome.alpha_bias = alpha_bias;
+    genome.confidence_gene = confidence_gene;
+    genome.risk_gene = risk_gene;
+    genome.honesty_gene = 0.5f;
+    genome.skepticism_gene = 0.5f;
+    genome.sensory_indices = {0};
+    genome.hidden_indices = {1, 2};
+
+    const std::uint32_t low_base = 3;
+    const std::uint32_t high_base = 11;
+    const std::uint32_t low_weight = 4;
+    const std::uint32_t high_weight = 12;
+    genome.action_indices = {
+        dominant_action_slot == 0 ? high_base : low_base,
+        dominant_action_slot == 0 ? high_weight : low_weight,
+        dominant_action_slot == 1 ? high_base : low_base,
+        dominant_action_slot == 1 ? high_weight : low_weight,
+        dominant_action_slot == 2 ? high_base : low_base,
+        dominant_action_slot == 2 ? high_weight : low_weight,
+    };
+
+    const std::uint32_t weak_raise_signal = 13;
+    const std::uint32_t strong_raise_signal = 14;
+    const std::uint32_t weak_confidence_signal = 13;
+    const std::uint32_t strong_confidence_signal = 15;
+    genome.modulation_indices = {
+        dominant_action_slot == 2 ? strong_raise_signal : weak_raise_signal,
+        confidence_gene >= 0.6f ? strong_confidence_signal : weak_confidence_signal,
+        13,
+        13,
+    };
+    return genome;
+}
+
+swarm::core::Chromosome make_scripted_chromosome(
+    const std::vector<std::uint32_t>& dominant_actions,
+    float alpha_bias,
+    float confidence_gene,
+    float risk_gene) {
+    const swarm::core::DecoderConfig config{1, 1, 3};
+    swarm::core::Genome blueprint = make_scripted_genome(dominant_actions.empty() ? 1U : dominant_actions.front(), alpha_bias, confidence_gene, risk_gene);
+    blueprint.chromosome_agent_count = static_cast<std::uint32_t>(dominant_actions.size());
+
+    std::vector<swarm::core::Agent> agents;
+    agents.reserve(dominant_actions.size());
+    for (std::uint32_t action_slot : dominant_actions) {
+        auto genome = make_scripted_genome(action_slot, alpha_bias, confidence_gene, risk_gene);
+        agents.emplace_back(genome, config);
+    }
+    return swarm::core::Chromosome(std::move(agents), blueprint);
+}
+
+swarm::core::Ocean make_scripted_ocean() {
+    swarm::core::Ocean ocean(16, 0.0f);
+    ocean.set(1, 0.2f);
+    ocean.set(2, 0.0f);
+    ocean.set(3, -4.0f);
+    ocean.set(4, -0.2f);
+    ocean.set(11, 4.5f);
+    ocean.set(12, 0.8f);
+    ocean.set(13, -3.0f);
+    ocean.set(14, 4.0f);
+    ocean.set(15, 3.5f);
+    return ocean;
+}
+
+swarm::core::PokerStateVector make_scripted_state() {
+    swarm::core::PokerStateVector state;
+    state.features = {0.0f};
+    state.to_call = 1.0f;
+    state.min_raise = 2.0f;
+    state.pot = 10.0f;
+    state.stack = 20.0f;
+    return state;
+}
+
 swarm::core::Chromosome make_chromosome_with_genes(
     std::size_t agent_count,
     std::size_t state_size,
@@ -475,23 +564,34 @@ void test_offspring_is_structurally_valid_and_starts_correctly() {
 
 void test_social_info_exchange_truthful_vs_deceptive() {
     swarm::util::Rng truthful_rng(123);
-    swarm::util::Rng deceptive_rng(456);
     auto requester = make_social_swarm(2, 2, truthful_rng, 0.5f, 0.2f);
     auto truthful = make_social_swarm(2, 3, truthful_rng, 1.0f, 0.2f);
-    auto deceptive = make_social_swarm(2, 3, deceptive_rng, 0.0f, 0.2f, 0.6f, 0.9f);
     truthful.set_hands_played(20000);
-    deceptive.set_hands_played(20000);
-    deceptive.add_bankroll(3000);
 
     const auto honest_answer = swarm::social::request_private_info(requester, truthful, swarm::social::PrivateInfoField::bankroll, truthful_rng);
     require(!honest_answer.refused, "fully honest swarm answers bankroll request");
     require(honest_answer.truthful, "fully honest swarm answers truthfully");
     require(std::fabs(honest_answer.reported_value - honest_answer.actual_value) < 0.0001, "truthful answer matches reality");
 
-    const auto lie = swarm::social::request_private_info(requester, deceptive, swarm::social::PrivateInfoField::bankroll, deceptive_rng);
-    require(!lie.refused, "dishonest swarm lies instead of refusing under test seed");
-    require(!lie.truthful, "dishonest swarm can lie");
-    require(std::fabs(lie.reported_value - lie.actual_value) > 0.001, "deceptive answer differs from reality");
+    bool observed_dishonest_behavior = false;
+    bool observed_lie = false;
+    for (std::uint64_t seed = 456; seed < 556; ++seed) {
+        swarm::util::Rng deceptive_rng(seed);
+        auto deceptive = make_social_swarm(2, 3, deceptive_rng, 0.0f, 0.2f, 0.6f, 0.9f);
+        deceptive.set_hands_played(20000);
+        deceptive.add_bankroll(3000);
+        const auto answer = swarm::social::request_private_info(requester, deceptive, swarm::social::PrivateInfoField::bankroll, deceptive_rng);
+        if (!answer.truthful) {
+            observed_dishonest_behavior = true;
+        }
+        if (!answer.truthful && !answer.refused && std::fabs(answer.reported_value - answer.actual_value) > 0.001) {
+            observed_lie = true;
+            break;
+        }
+    }
+
+    require(observed_dishonest_behavior, "dishonest swarm no longer always answers truthfully");
+    require(observed_lie, "dishonest swarm can still fabricate bankroll reports");
 }
 
 void test_social_skepticism_changes_interpretation() {
@@ -509,6 +609,82 @@ void test_social_skepticism_changes_interpretation() {
     require(std::fabs(gullible_view.believed_value - 9000.0) < 0.0001, "zero skepticism fully trusts reported value");
     require(std::fabs(skeptical_view.believed_value - 5000.0) < 0.0001, "max skepticism falls back to baseline actual value");
     require(gullible_view.trust_weight > skeptical_view.trust_weight, "skepticism lowers trust weight");
+}
+
+void test_alpha_led_governance_uses_advisor_signal() {
+    const auto ocean = make_scripted_ocean();
+    const auto state = make_scripted_state();
+
+    swarm::core::Swarm alpha_following_raise(
+        make_scripted_chromosome({1, 1, 1}, 0.15f, 0.85f, 0.25f),
+        make_scripted_chromosome({2, 2}, 0.40f, 0.80f, 0.95f),
+        swarm::core::Swarm::starting_bankroll);
+
+    swarm::core::Swarm alpha_following_fold(
+        make_scripted_chromosome({1, 1, 1}, 0.15f, 0.85f, 0.25f),
+        make_scripted_chromosome({0, 0}, 0.40f, 0.80f, 0.20f),
+        swarm::core::Swarm::starting_bankroll);
+
+    const auto raise_decision = alpha_following_raise.decide(ocean, state, 1);
+    const auto fold_decision = alpha_following_fold.decide(ocean, state, 1);
+
+    require(alpha_following_raise.governance_mode() == swarm::core::GovernanceMode::alpha_led, "odd-sized swarm stays alpha-led");
+    require(raise_decision.action == swarm::core::ActionType::check_call, "alpha still owns the final call in alpha-led mode");
+    require(fold_decision.action == swarm::core::ActionType::check_call, "alpha-led can remain distinct from pure majority voting");
+    require(raise_decision.action_scores[2] > fold_decision.action_scores[2] + 0.15f, "raise advisors materially increase alpha-led raise pressure");
+    require(fold_decision.action_scores[0] > raise_decision.action_scores[0] + 0.15f, "fold advisors materially increase alpha-led fold pressure");
+}
+
+void test_alpha_led_remains_distinct_from_democratic() {
+    const auto ocean = make_scripted_ocean();
+    const auto state = make_scripted_state();
+
+    swarm::core::Swarm alpha_led(
+        make_scripted_chromosome({1, 2, 2}, 0.90f, 0.85f, 0.25f),
+        make_scripted_chromosome({2, 2}, 0.40f, 0.80f, 0.95f),
+        swarm::core::Swarm::starting_bankroll);
+
+    swarm::core::Swarm democratic(
+        make_scripted_chromosome({1, 2, 2}, 0.90f, 0.85f, 0.25f),
+        make_scripted_chromosome({2, 2, 2}, 0.40f, 0.80f, 0.95f),
+        swarm::core::Swarm::starting_bankroll);
+
+    const auto alpha_decision = alpha_led.decide(ocean, state, 1);
+    const auto democratic_decision = democratic.decide(ocean, state, 1);
+
+    require(alpha_led.governance_mode() == swarm::core::GovernanceMode::alpha_led, "odd-sized scripted swarm is alpha-led");
+    require(democratic.governance_mode() == swarm::core::GovernanceMode::democratic, "even-sized scripted swarm is democratic");
+    require(alpha_decision.action == swarm::core::ActionType::check_call, "alpha-led still respects alpha veto and does not collapse into plain majority rule");
+    require(democratic_decision.action == swarm::core::ActionType::raise, "democratic mode follows chromosome aggregate majority");
+}
+
+void test_rng_seed_reproducibility_and_ranges() {
+    swarm::util::Rng first(20260312);
+    swarm::util::Rng second(20260312);
+    swarm::util::Rng different(20260313);
+
+    for (int i = 0; i < 32; ++i) {
+        require(first.next_u64() == second.next_u64(), "same RNG seed reproduces sequence");
+    }
+
+    const auto first_value = first.next_u64();
+    const auto different_value = different.next_u64();
+    require(first_value != different_value, "different RNG seeds diverge quickly");
+
+    for (int i = 0; i < 256; ++i) {
+        const int integer = first.next_int(-3, 7);
+        const float real = first.next_float();
+        require(integer >= -3 && integer <= 7, "next_int stays within inclusive bounds");
+        require(real >= 0.0f && real < 1.0f, "next_float stays within unit interval");
+    }
+
+    std::vector<int> shuffled{1, 2, 3, 4, 5, 6, 7, 8};
+    swarm::util::Rng shuffle_a(77);
+    swarm::util::Rng shuffle_b(77);
+    shuffle_a.shuffle(shuffled.begin(), shuffled.end());
+    std::vector<int> shuffled_again{1, 2, 3, 4, 5, 6, 7, 8};
+    shuffle_b.shuffle(shuffled_again.begin(), shuffled_again.end());
+    require(shuffled == shuffled_again, "shuffle is deterministic under the same seed");
 }
 
 void test_default_policy_alignment() {
@@ -593,6 +769,9 @@ int main() {
     test_offspring_is_structurally_valid_and_starts_correctly();
     test_social_info_exchange_truthful_vs_deceptive();
     test_social_skepticism_changes_interpretation();
+    test_alpha_led_governance_uses_advisor_signal();
+    test_alpha_led_remains_distinct_from_democratic();
+    test_rng_seed_reproducibility_and_ranges();
     test_default_policy_alignment();
     test_swarm_birth_distribution_sum_of_two_dice();
     test_mate_selection_respects_eligibility_and_parity();

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
 namespace swarm::core {
 
@@ -15,39 +14,99 @@ float mean_gene(const Chromosome& first, const Chromosome& second, float Genome:
     return 0.5f * (first.blueprint().*member + second.blueprint().*member);
 }
 
-std::size_t pick_first_chromosome_size(std::size_t total_agents, swarm::util::Rng& rng) {
-    std::vector<std::size_t> valid;
-    for (std::size_t first = 2; first <= 9; ++first) {
-        const auto second = total_agents - first;
-        if (second >= 2 && second <= 9) {
-            valid.push_back(first);
+Decision finalize_decision(Decision decision) {
+    float score_sum = 0.0f;
+    for (float& score : decision.action_scores) {
+        score = std::max(0.0f, score);
+        score_sum += score;
+    }
+
+    if (score_sum <= 0.0f) {
+        decision.action_scores = {0.0f, 1.0f, 0.0f};
+    } else {
+        for (float& score : decision.action_scores) {
+            score /= score_sum;
         }
     }
-    if (valid.empty()) {
-        throw std::invalid_argument("no valid chromosome split for swarm");
-    }
-    return valid[static_cast<std::size_t>(rng.uniform_int(0, static_cast<int>(valid.size() - 1)))];
-}
-
-Decision merge_democratic(const Decision& first, const Decision& second) {
-    Decision merged;
-    for (std::size_t i = 0; i < merged.action_scores.size(); ++i) {
-        merged.action_scores[i] = 0.5f * (first.action_scores[i] + second.action_scores[i]);
-    }
-    merged.raise_amount = 0.5f * (first.raise_amount + second.raise_amount);
-    merged.confidence = std::clamp(0.5f * (first.confidence + second.confidence), 0.0f, 1.0f);
 
     std::size_t best_index = 0;
-    for (std::size_t i = 1; i < merged.action_scores.size(); ++i) {
-        if (merged.action_scores[i] > merged.action_scores[best_index]) {
+    for (std::size_t i = 1; i < decision.action_scores.size(); ++i) {
+        if (decision.action_scores[i] > decision.action_scores[best_index]) {
             best_index = i;
         }
     }
-    merged.action = static_cast<ActionType>(best_index);
-    if (merged.action != ActionType::raise) {
-        merged.raise_amount = 0.0f;
+    decision.action = static_cast<ActionType>(best_index);
+    decision.confidence = std::clamp(decision.confidence, 0.0f, 1.0f);
+    if (decision.action != ActionType::raise) {
+        decision.raise_amount = 0.0f;
+    } else {
+        decision.raise_amount = std::max(0.0f, decision.raise_amount);
     }
-    return merged;
+    return decision;
+}
+
+Decision blend_decisions(const Decision& first, float first_weight, const Decision& second, float second_weight) {
+    Decision merged;
+    const float total_weight = first_weight + second_weight;
+    if (total_weight <= 0.0f) {
+        return finalize_decision(merged);
+    }
+
+    for (std::size_t i = 0; i < merged.action_scores.size(); ++i) {
+        merged.action_scores[i] = (first.action_scores[i] * first_weight + second.action_scores[i] * second_weight) / total_weight;
+    }
+    merged.raise_amount = (first.raise_amount * first_weight + second.raise_amount * second_weight) / total_weight;
+    merged.confidence = (first.confidence * first_weight + second.confidence * second_weight) / total_weight;
+    return finalize_decision(merged);
+}
+
+Decision merge_democratic(const Decision& first, const Decision& second) {
+    return blend_decisions(first, 1.0f, second, 1.0f);
+}
+
+Decision aggregate_advisor_signal(const Chromosome& chromosome, const Ocean& ocean, const PokerStateVector& state) {
+    if (chromosome.size() <= 1) {
+        return {};
+    }
+
+    Decision aggregate;
+    float total_weight = 0.0f;
+    const auto& agents = chromosome.agents();
+    for (std::size_t i = 1; i < agents.size(); ++i) {
+        const Decision advisor = agents[i].decide(ocean, state);
+        const float rank_weight = 1.0f + 0.15f * static_cast<float>(i - 1);
+        const float confidence_weight = 0.35f + advisor.confidence;
+        const float weight = rank_weight * confidence_weight;
+        total_weight += weight;
+        for (std::size_t score_index = 0; score_index < aggregate.action_scores.size(); ++score_index) {
+            aggregate.action_scores[score_index] += advisor.action_scores[score_index] * weight;
+        }
+        aggregate.raise_amount += advisor.raise_amount * weight;
+        aggregate.confidence += advisor.confidence * weight;
+    }
+
+    if (total_weight <= 0.0f) {
+        return {};
+    }
+
+    for (float& score : aggregate.action_scores) {
+        score /= total_weight;
+    }
+    aggregate.raise_amount /= total_weight;
+    aggregate.confidence /= total_weight;
+    return finalize_decision(aggregate);
+}
+
+Decision decide_alpha_led(const Chromosome& dominant, const Chromosome& advisor_chromosome, const Ocean& ocean, const PokerStateVector& state) {
+    const Decision alpha = dominant.agents().front().decide(ocean, state);
+    const Decision inner_advisors = aggregate_advisor_signal(dominant, ocean, state);
+    const Decision external_advisors = advisor_chromosome.decide(ocean, state);
+
+    const float alpha_bias = std::clamp(dominant.blueprint().alpha_bias, 0.0f, 1.0f);
+    const float alpha_weight = 1.1f + alpha_bias * 1.9f + alpha.confidence * 0.5f;
+    const float advisor_weight = 0.35f + (1.0f - alpha_bias) * 0.9f + inner_advisors.confidence * 0.45f + external_advisors.confidence * 0.35f;
+    const Decision combined_advisors = blend_decisions(inner_advisors, 1.0f, external_advisors, 0.8f);
+    return blend_decisions(alpha, alpha_weight, combined_advisors, advisor_weight);
 }
 
 } // namespace
@@ -66,9 +125,8 @@ Swarm::Swarm(Chromosome first_chromosome, Chromosome second_chromosome, std::int
 }
 
 Swarm Swarm::random(std::uint32_t ocean_size, std::size_t state_size, swarm::util::Rng& rng) {
-    const std::size_t first_size = static_cast<std::size_t>(rng.uniform_int(2, 9));
-    const std::size_t second_size = static_cast<std::size_t>(rng.uniform_int(2, 9));
-    const std::size_t total_agents = first_size + second_size;
+    const std::size_t first_size = static_cast<std::size_t>(rng.next_int(2, 9));
+    const std::size_t second_size = static_cast<std::size_t>(rng.next_int(2, 9));
     const DecoderConfig config{state_size, 4, 3};
 
     Genome first_blueprint = Genome::random(state_size, ocean_size, rng, static_cast<std::uint32_t>(first_size));
@@ -86,8 +144,10 @@ GovernanceMode Swarm::governance_mode() const noexcept {
 
 Decision Swarm::decide(const Ocean& ocean, const PokerStateVector& state, std::size_t) const {
     if (governance_mode() == GovernanceMode::alpha_led) {
-        const Chromosome& dominant = first_chromosome_.size() >= second_chromosome_.size() ? first_chromosome_ : second_chromosome_;
-        return dominant.agents().front().decide(ocean, state);
+        const bool first_is_dominant = first_chromosome_.size() >= second_chromosome_.size();
+        const Chromosome& dominant = first_is_dominant ? first_chromosome_ : second_chromosome_;
+        const Chromosome& advisors = first_is_dominant ? second_chromosome_ : first_chromosome_;
+        return decide_alpha_led(dominant, advisors, ocean, state);
     }
 
     return merge_democratic(first_chromosome_.decide(ocean, state), second_chromosome_.decide(ocean, state));
