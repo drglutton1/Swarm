@@ -17,7 +17,7 @@ struct LifecyclePolicy {
     std::uint64_t maturity_start_hands = 10000;
     std::uint64_t old_age_start_hands = 90000;
     std::uint64_t death_hands = 100000;
-    std::uint64_t reproduction_cooldown_hands = 5000;
+    std::uint64_t reproduction_cooldown_hands = 10000;
     std::uint32_t max_offspring = 8;
 };
 

@@ -8,7 +8,7 @@
 namespace swarm::evolution {
 
 struct CrossoverPolicy {
-    double crossover_probability = 0.1;
+    double crossover_probability = 0.01;
 };
 
 [[nodiscard]] std::pair<swarm::core::Genome, swarm::core::Genome> maybe_crossover(

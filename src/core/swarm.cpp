@@ -66,9 +66,9 @@ Swarm::Swarm(Chromosome first_chromosome, Chromosome second_chromosome, std::int
 }
 
 Swarm Swarm::random(std::uint32_t ocean_size, std::size_t state_size, swarm::util::Rng& rng) {
-    const std::size_t total_agents = static_cast<std::size_t>(rng.uniform_int(4, 18));
-    const std::size_t first_size = pick_first_chromosome_size(total_agents, rng);
-    const std::size_t second_size = total_agents - first_size;
+    const std::size_t first_size = static_cast<std::size_t>(rng.uniform_int(2, 9));
+    const std::size_t second_size = static_cast<std::size_t>(rng.uniform_int(2, 9));
+    const std::size_t total_agents = first_size + second_size;
     const DecoderConfig config{state_size, 4, 3};
 
     Genome first_blueprint = Genome::random(state_size, ocean_size, rng, static_cast<std::uint32_t>(first_size));
