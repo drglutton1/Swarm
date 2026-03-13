@@ -118,6 +118,97 @@ void test_tiebreakers() {
     require(kings_up < aces_up, "two-pair tiebreak ordering works");
 }
 
+void test_side_pot_eligibility_uneven_all_in() {
+    swarm::poker::Table table(3, 100, 5, 5, 0, 1);
+    std::vector<std::int64_t> stacks{0, 0, 0};
+    std::vector<std::int64_t> contributions{20, 50, 100};
+    std::vector<bool> folded{false, false, false};
+
+    const auto best_short = swarm::poker::evaluate_best_of_seven({
+        c(Rank::ace, Suit::hearts), c(Rank::ace, Suit::clubs), c(Rank::king, Suit::hearts),
+        c(Rank::queen, Suit::hearts), c(Rank::jack, Suit::hearts), c(Rank::nine, Suit::clubs), c(Rank::two, Suit::diamonds)});
+    const auto middle = swarm::poker::evaluate_best_of_seven({
+        c(Rank::king, Suit::spades), c(Rank::king, Suit::clubs), c(Rank::queen, Suit::spades),
+        c(Rank::jack, Suit::spades), c(Rank::ten, Suit::spades), c(Rank::eight, Suit::clubs), c(Rank::three, Suit::diamonds)});
+    const auto deep = swarm::poker::evaluate_best_of_seven({
+        c(Rank::queen, Suit::clubs), c(Rank::queen, Suit::diamonds), c(Rank::jack, Suit::clubs),
+        c(Rank::ten, Suit::clubs), c(Rank::nine, Suit::clubs), c(Rank::seven, Suit::diamonds), c(Rank::four, Suit::spades)});
+
+    const auto result = table.resolve_showdown_for_test(stacks, contributions, folded, {best_short, middle, deep});
+    require(result[0] == 60, "short all-in winner gets only main pot");
+    require(result[1] == 60, "middle stack wins first side pot");
+    require(result[2] == 50, "deep stack keeps final uncontested side pot only");
+}
+
+void test_betting_round_allows_reraises_and_reopens_action() {
+    swarm::poker::Table table(3, 200, 5, 10, 0, 2);
+    const auto result = table.run_forced_betting_round_for_test(
+        {100, 100, 100},
+        {0, 5, 10},
+        {false, false, false},
+        0,
+        10,
+        10,
+        "Preflop",
+        {
+            {swarm::poker::ForcedAction::Type::raise_to, 30},
+            {swarm::poker::ForcedAction::Type::raise_to, 50},
+            {swarm::poker::ForcedAction::Type::check_call, 0},
+            {swarm::poker::ForcedAction::Type::check_call, 0},
+        });
+
+    require(result.hand_continues, "multi-raise round still continues to showdown");
+    require(result.current_bet == 50, "current bet reflects reraise");
+    require(result.players[0].street_commitment == 50, "opener can act again after reraise and calls");
+    require(result.players[1].street_commitment == 50, "small blind reraises to 50");
+    require(result.players[2].street_commitment == 50, "big blind calls final bet");
+}
+
+void test_short_stack_calls_all_in_instead_of_forced_fold() {
+    swarm::poker::Table table(3, 200, 5, 10, 0, 3);
+    const auto result = table.run_forced_betting_round_for_test(
+        {15, 100, 100},
+        {0, 0, 0},
+        {false, false, false},
+        0,
+        30,
+        10,
+        "Turn",
+        {
+            {swarm::poker::ForcedAction::Type::check_call, 0},
+            {swarm::poker::ForcedAction::Type::check_call, 0},
+            {swarm::poker::ForcedAction::Type::check_call, 0},
+        });
+
+    require(result.players[0].street_commitment == 15, "short stack puts last chips in rather than folding");
+    require(!result.players[0].folded, "short stack remains eligible after all-in call");
+}
+
+void test_rake_by_street_and_chop_logic() {
+    swarm::poker::Table table(2, 100, 5, 5, 5, 4);
+    const auto chopped = table.resolve_showdown_for_test(
+        {0, 0},
+        {50, 50},
+        {false, false},
+        {
+            swarm::poker::evaluate_best_of_seven({c(Rank::ace, Suit::clubs), c(Rank::king, Suit::clubs), c(Rank::queen, Suit::clubs), c(Rank::jack, Suit::clubs), c(Rank::ten, Suit::clubs), c(Rank::two, Suit::hearts), c(Rank::three, Suit::hearts)}),
+            swarm::poker::evaluate_best_of_seven({c(Rank::ace, Suit::spades), c(Rank::king, Suit::spades), c(Rank::queen, Suit::spades), c(Rank::jack, Suit::spades), c(Rank::ten, Suit::spades), c(Rank::two, Suit::diamonds), c(Rank::three, Suit::diamonds)})
+        },
+        7);
+    require(chopped[0] == 47 && chopped[1] == 46, "river chop applies cumulative rake then even-split remainder rule");
+
+    const auto unraked_preflop = table.resolve_showdown_for_test(
+        {0, 0},
+        {5, 5},
+        {false, true},
+        {
+            swarm::poker::evaluate_best_of_seven({c(Rank::ace, Suit::clubs), c(Rank::king, Suit::clubs), c(Rank::queen, Suit::clubs), c(Rank::jack, Suit::clubs), c(Rank::ten, Suit::clubs), c(Rank::two, Suit::hearts), c(Rank::three, Suit::hearts)}),
+            swarm::poker::evaluate_best_of_seven({c(Rank::two, Suit::clubs), c(Rank::three, Suit::clubs), c(Rank::four, Suit::clubs), c(Rank::five, Suit::clubs), c(Rank::six, Suit::clubs), c(Rank::seven, Suit::hearts), c(Rank::eight, Suit::hearts)})
+        },
+        0);
+    require(unraked_preflop[0] == 10, "preflop-only pots can settle without street rake");
+}
+
 void test_chip_conservation() {
     swarm::poker::Table table(8, 1000, 5, 5, 1, 42);
     const auto summary = table.run(2000, false, std::cout);
@@ -420,6 +511,34 @@ void test_social_skepticism_changes_interpretation() {
     require(gullible_view.trust_weight > skeptical_view.trust_weight, "skepticism lowers trust weight");
 }
 
+void test_default_policy_alignment() {
+    swarm::evolution::LifecyclePolicy lifecycle;
+    swarm::evolution::CrossoverPolicy crossover;
+    require(lifecycle.reproduction_cooldown_hands == 10000, "default reproduction cooldown aligned to spec");
+    require(std::fabs(crossover.crossover_probability - 0.01) < 1e-9, "default crossover probability aligned to spec");
+}
+
+void test_swarm_birth_distribution_sum_of_two_dice() {
+    swarm::util::Rng rng(20260312);
+    bool saw_four = false;
+    bool saw_eighteen = false;
+    bool saw_odd = false;
+    for (int i = 0; i < 500; ++i) {
+        auto swarm = swarm::core::Swarm::random(512, 6, rng);
+        const auto first = swarm.first_chromosome().size();
+        const auto second = swarm.second_chromosome().size();
+        require(first >= 2 && first <= 9, "first chromosome uses 2..9 distribution");
+        require(second >= 2 && second <= 9, "second chromosome uses 2..9 distribution");
+        require(swarm.total_agents() == first + second, "total agents are the sum of both chromosome draws");
+        saw_four = saw_four || swarm.total_agents() == 4;
+        saw_eighteen = saw_eighteen || swarm.total_agents() == 18;
+        saw_odd = saw_odd || (swarm.total_agents() % 2 == 1);
+    }
+    require(saw_four, "distribution can realize minimum total 4");
+    require(saw_eighteen, "distribution can realize maximum total 18");
+    require(saw_odd, "sum-of-two-dice distribution includes odd totals");
+}
+
 void test_mate_selection_respects_eligibility_and_parity() {
     swarm::util::Rng rng(2468);
     auto seeker = make_social_swarm(2, 2, rng, 0.5f, 0.2f);
@@ -457,6 +576,10 @@ void test_mate_selection_respects_eligibility_and_parity() {
 int main() {
     test_hand_ordering();
     test_tiebreakers();
+    test_side_pot_eligibility_uneven_all_in();
+    test_betting_round_allows_reraises_and_reopens_action();
+    test_short_stack_calls_all_in_instead_of_forced_fold();
+    test_rake_by_street_and_chop_logic();
     test_chip_conservation();
     test_verbose_flow_mentions_holdem_streets();
     test_heads_up_button_posts_small_blind();
@@ -470,6 +593,8 @@ int main() {
     test_offspring_is_structurally_valid_and_starts_correctly();
     test_social_info_exchange_truthful_vs_deceptive();
     test_social_skepticism_changes_interpretation();
+    test_default_policy_alignment();
+    test_swarm_birth_distribution_sum_of_two_dice();
     test_mate_selection_respects_eligibility_and_parity();
     std::cout << "PASS: test_poker\n";
     return 0;
