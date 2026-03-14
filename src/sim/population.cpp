@@ -18,23 +18,23 @@ swarm::core::Chromosome make_random_chromosome(
     return swarm::core::Chromosome::spawn_from_blueprint(genome, agent_count, config, ocean_size);
 }
 
-swarm::core::Swarm make_seeded_swarm(std::size_t index, const PopulationConfig& config, swarm::util::Rng& rng) {
-    const std::size_t first_agents = 2 + ((index * 3) % 4);
-    const std::size_t second_agents = 2 + ((index * 5 + 1) % 4);
-    swarm::core::Swarm swarm(
+swarm::core::Swarm make_seeded_swarm(const PopulationConfig& config, swarm::util::Rng& rng) {
+    const std::size_t first_agents = static_cast<std::size_t>(rng.next_int(2, 9));
+    const std::size_t second_agents = static_cast<std::size_t>(rng.next_int(2, 9));
+    auto swarm = swarm::core::Swarm(
         make_random_chromosome(first_agents, config.state_size, static_cast<std::uint32_t>(config.ocean_size), rng),
         make_random_chromosome(second_agents, config.state_size, static_cast<std::uint32_t>(config.ocean_size), rng),
         0);
 
-    const std::uint64_t lifecycle_band = static_cast<std::uint64_t>(index % 4);
-    if (lifecycle_band == 0) {
-        swarm.set_hands_played(2000 + static_cast<std::uint64_t>(index) * 37ULL);
-    } else if (lifecycle_band == 1) {
-        swarm.set_hands_played(15000 + static_cast<std::uint64_t>(index) * 41ULL);
-    } else if (lifecycle_band == 2) {
-        swarm.set_hands_played(42000 + static_cast<std::uint64_t>(index) * 29ULL);
+    const std::uint64_t lifecycle_roll = static_cast<std::uint64_t>(rng.next_int<int>(0, 3));
+    if (lifecycle_roll == 0) {
+        swarm.set_hands_played(static_cast<std::uint64_t>(rng.next_int<int>(0, 9000)));
+    } else if (lifecycle_roll == 1) {
+        swarm.set_hands_played(static_cast<std::uint64_t>(rng.next_int<int>(10000, 45000)));
+    } else if (lifecycle_roll == 2) {
+        swarm.set_hands_played(static_cast<std::uint64_t>(rng.next_int<int>(45001, 89999)));
     } else {
-        swarm.set_hands_played(91000 + static_cast<std::uint64_t>(index) * 11ULL);
+        swarm.set_hands_played(static_cast<std::uint64_t>(rng.next_int<int>(90000, 99999)));
     }
     return swarm;
 }
@@ -52,11 +52,12 @@ Population Population::create_default(PopulationConfig config) {
 
     population.swarms_.reserve(config.swarm_count);
     for (std::size_t i = 0; i < config.swarm_count; ++i) {
-        auto& swarm = population.swarms_.emplace_back(make_seeded_swarm(i, config, population.rng_));
+        auto& swarm = population.swarms_.emplace_back(make_seeded_swarm(config, population.rng_));
         population.chip_manager_.inject(swarm, config.starting_bankroll);
         population.runtime_.emplace(swarm.id(), SwarmRuntimeState{});
     }
 
+    population.rebuild_index();
     population.chip_manager_.require_invariants();
     return population;
 }
@@ -66,6 +67,7 @@ swarm::core::Ocean& Population::ocean() noexcept { return ocean_; }
 const swarm::core::Ocean& Population::ocean() const noexcept { return ocean_; }
 std::vector<swarm::core::Swarm>& Population::swarms() noexcept { return swarms_; }
 const std::vector<swarm::core::Swarm>& Population::swarms() const noexcept { return swarms_; }
+const std::vector<swarm::core::Swarm>& Population::dead_swarms() const noexcept { return dead_swarms_; }
 swarm::economy::ChipManager& Population::chip_manager() noexcept { return chip_manager_; }
 const swarm::economy::ChipManager& Population::chip_manager() const noexcept { return chip_manager_; }
 swarm::util::Rng& Population::rng() noexcept { return rng_; }
@@ -74,7 +76,11 @@ std::unordered_map<std::uint64_t, SwarmRuntimeState>& Population::runtime() noex
 const std::unordered_map<std::uint64_t, SwarmRuntimeState>& Population::runtime() const noexcept { return runtime_; }
 
 swarm::core::Swarm* Population::find_swarm(std::uint64_t swarm_id) noexcept {
-    for (auto& swarm : swarms_) {
+    const auto it = id_to_index_.find(swarm_id);
+    if (it != id_to_index_.end()) {
+        return &swarms_[it->second];
+    }
+    for (auto& swarm : dead_swarms_) {
         if (swarm.id() == swarm_id) {
             return &swarm;
         }
@@ -83,7 +89,11 @@ swarm::core::Swarm* Population::find_swarm(std::uint64_t swarm_id) noexcept {
 }
 
 const swarm::core::Swarm* Population::find_swarm(std::uint64_t swarm_id) const noexcept {
-    for (const auto& swarm : swarms_) {
+    const auto it = id_to_index_.find(swarm_id);
+    if (it != id_to_index_.end()) {
+        return &swarms_[it->second];
+    }
+    for (const auto& swarm : dead_swarms_) {
         if (swarm.id() == swarm_id) {
             return &swarm;
         }
@@ -103,6 +113,7 @@ void Population::register_offspring(std::uint64_t parent_a, std::uint64_t parent
     offspring_links_[parent_a].push_back(child_id);
     offspring_links_[parent_b].push_back(child_id);
     runtime_[child_id] = SwarmRuntimeState{};
+    rebuild_index();
 }
 
 std::vector<swarm::core::Swarm*> Population::living_offspring_of(std::uint64_t parent_id) {
@@ -113,8 +124,12 @@ std::vector<swarm::core::Swarm*> Population::living_offspring_of(std::uint64_t p
     }
 
     for (const auto child_id : it->second) {
-        if (auto* child = find_swarm(child_id); child != nullptr && child->alive()) {
-            result.push_back(child);
+        auto active_it = id_to_index_.find(child_id);
+        if (active_it != id_to_index_.end()) {
+            auto& child = swarms_[active_it->second];
+            if (child.alive()) {
+                result.push_back(&child);
+            }
         }
     }
     return result;
@@ -128,6 +143,30 @@ void Population::refresh_ocean() {
     ocean_.decay(0.998f);
     const std::uint32_t deposit_index = static_cast<std::uint32_t>(rng_.next_int<std::uint32_t>(0, static_cast<std::uint32_t>(ocean_.size() - 1)));
     ocean_.deposit(deposit_index, rng_.next_real<float>(-0.05f, 0.10f));
+}
+
+void Population::rebuild_index() {
+    id_to_index_.clear();
+    id_to_index_.reserve(swarms_.size());
+    for (std::size_t i = 0; i < swarms_.size(); ++i) {
+        id_to_index_[swarms_[i].id()] = i;
+    }
+}
+
+void Population::prune_dead() {
+    std::size_t write = 0;
+    for (std::size_t read = 0; read < swarms_.size(); ++read) {
+        if (swarms_[read].alive()) {
+            if (write != read) {
+                swarms_[write] = std::move(swarms_[read]);
+            }
+            ++write;
+        } else {
+            dead_swarms_.push_back(std::move(swarms_[read]));
+        }
+    }
+    swarms_.resize(write);
+    rebuild_index();
 }
 
 } // namespace swarm::sim

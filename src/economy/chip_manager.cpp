@@ -32,6 +32,14 @@ void ChipManager::burn(swarm::core::Swarm& swarm, std::int64_t amount) {
     chips_in_play_ -= amount;
 }
 
+void ChipManager::burn_external(std::int64_t amount) {
+    if (amount <= 0) {
+        throw std::invalid_argument("external burn amount must be positive");
+    }
+    chips_burned_ += amount;
+    chips_in_play_ -= amount;
+}
+
 bool ChipManager::invariants_hold() const noexcept {
     return chips_injected_ >= 0 && chips_burned_ >= 0 && chips_in_play_ >= 0 && chips_in_play_ + chips_burned_ == chips_injected_;
 }

@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
         const std::size_t state_size = 6;
         swarm::core::Swarm swarm = swarm::core::Swarm::random(static_cast<std::uint32_t>(ocean.size()), state_size, rng);
 
-        const swarm::core::PokerStateVector sample_state{{0.65f, 0.30f, 0.55f, 0.10f, 0.75f, 0.40f}, 5.0f, 10.0f, 25.0f, 100.0f};
+        const swarm::core::PokerStateVector sample_state{{0.65f, 0.30f, 0.55f, 0.10f, 0.75f, 0.40f}, 5.0f, 5.0f, 25.0f, 100.0f};
         swarm.set_hands_played(15000);
         const auto decision = swarm.decide(ocean, sample_state, 1);
         const auto lifecycle = swarm::evolution::evaluate(swarm);

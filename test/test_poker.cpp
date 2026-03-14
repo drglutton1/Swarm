@@ -858,6 +858,21 @@ void test_table_manager_uses_activity_and_lifecycle_for_eligibility() {
     require(plan.deferred_swarm_ids.size() == 1 && plan.deferred_swarm_ids[0] == playing.id(), "only living play-mode swarms remain eligible but can still be deferred");
 }
 
+void test_chip_manager_supports_external_burns() {
+    swarm::util::Rng rng(20260313);
+    auto swarm = make_swarm(2, 2, rng);
+    swarm.remove_bankroll(swarm.bankroll());
+
+    swarm::economy::ChipManager manager;
+    manager.inject(swarm, 5000);
+    manager.burn_external(7);
+
+    require(swarm.bankroll() == 5000, "external burn does not mutate a swarm stack directly");
+    require(manager.chips_burned() == 7, "external burn increases burned tally");
+    require(manager.chips_in_play() == 4993, "external burn reduces chips in play");
+    require(manager.invariants_hold(), "external burn preserves chip invariant");
+}
+
 void test_simulation_population_initialization_is_accounted_and_deterministic() {
     swarm::sim::PopulationConfig config;
     config.swarm_count = 10;
@@ -871,6 +886,22 @@ void test_simulation_population_initialization_is_accounted_and_deterministic() 
     require(first.chip_manager().invariants_hold(), "population chip invariants hold after initialization");
     require(first.swarms().front().total_agents() == second.swarms().front().total_agents(), "population initialization is deterministic for first swarm size");
     require(first.swarms()[3].hands_played() == second.swarms()[3].hands_played(), "population initialization is deterministic for lifecycle seeding");
+}
+
+void test_population_prunes_dead_swarms_from_active_container() {
+    swarm::sim::PopulationConfig config;
+    config.swarm_count = 6;
+    config.seed = 7777;
+
+    auto population = swarm::sim::Population::create_default(config);
+    const auto victim_id = population.swarms().front().id();
+    population.swarms().front().mark_dead();
+    population.prune_dead();
+
+    require(population.swarms().size() == 5, "dead swarm removed from active container");
+    require(population.dead_swarms().size() == 1, "dead swarm retained in graveyard bookkeeping");
+    require(population.find_swarm(victim_id) != nullptr, "find_swarm can still locate segregated dead swarm for bookkeeping lookups");
+    require(!population.find_swarm(victim_id)->alive(), "segregated dead swarm remains dead");
 }
 
 void test_simulation_step_preserves_chip_accounting_and_advances_state() {
@@ -892,6 +923,20 @@ void test_simulation_step_preserves_chip_accounting_and_advances_state() {
     require(simulation.population().chip_manager().chips_in_play() == chips_before, "chip manager chips in play remain stable without burns/injections dominating first step");
     require(latest.total_swarms >= swarms_before, "simulation maintains or grows swarm population after reproduction pass");
     require(latest.playing_swarms + latest.resting_swarms + latest.sleeping_swarms == latest.total_swarms, "every swarm has an activity bucket");
+}
+
+void test_simulation_tracks_rake_as_external_burn() {
+    swarm::sim::SimulationConfig config;
+    config.population.seed = 654321;
+    config.population.swarm_count = 24;
+    config.hands_per_table_block = 3;
+    config.rake_per_hand = 5;
+
+    swarm::sim::Simulation simulation(config);
+    simulation.run_blocks(20);
+
+    require(simulation.population().chip_manager().chips_burned() > 0, "integrated simulation burns rake through chip manager when tables run");
+    require(simulation.statistics().latest().chip_accounting_ok, "integrated simulation keeps accounting consistent with nonzero rake");
 }
 
 void test_simulation_run_blocks_produces_statistics_history() {
@@ -941,8 +986,11 @@ int main() {
     test_table_manager_prevents_double_booking_and_fills_full_table();
     test_table_manager_handles_leftovers_gracefully();
     test_table_manager_uses_activity_and_lifecycle_for_eligibility();
+    test_chip_manager_supports_external_burns();
     test_simulation_population_initialization_is_accounted_and_deterministic();
+    test_population_prunes_dead_swarms_from_active_container();
     test_simulation_step_preserves_chip_accounting_and_advances_state();
+    test_simulation_tracks_rake_as_external_burn();
     test_simulation_run_blocks_produces_statistics_history();
     std::cout << "PASS: test_poker\n";
     return 0;

@@ -15,7 +15,8 @@ void StatisticsCollector::capture(const Population& population, const swarm::sch
     snapshot.hands_resolved = hands_resolved;
     snapshot.offspring_born = offspring_born;
     snapshot.deaths_processed = deaths_processed;
-    snapshot.total_swarms = population.swarms().size();
+    snapshot.total_swarms = population.swarms().size() + population.dead_swarms().size();
+    snapshot.dead_swarms = population.dead_swarms().size();
     snapshot.min_bankroll = population.swarms().empty() ? 0 : std::numeric_limits<std::int64_t>::max();
     snapshot.max_bankroll = population.swarms().empty() ? 0 : std::numeric_limits<std::int64_t>::min();
 
@@ -26,8 +27,6 @@ void StatisticsCollector::capture(const Population& population, const swarm::sch
         snapshot.max_bankroll = std::max(snapshot.max_bankroll, swarm.bankroll());
         if (lifecycle.alive) {
             ++snapshot.alive_swarms;
-        } else {
-            ++snapshot.dead_swarms;
         }
         switch (lifecycle.phase) {
             case swarm::evolution::LifePhase::youth:
@@ -60,7 +59,7 @@ void StatisticsCollector::capture(const Population& population, const swarm::sch
         }
     }
 
-    snapshot.average_bankroll = snapshot.total_swarms == 0 ? 0.0 : static_cast<double>(snapshot.total_bankroll) / static_cast<double>(snapshot.total_swarms);
+    snapshot.average_bankroll = snapshot.alive_swarms == 0 ? 0.0 : static_cast<double>(snapshot.total_bankroll) / static_cast<double>(snapshot.alive_swarms);
     snapshot.chip_accounting_ok = population.chip_manager().invariants_hold() && population.chip_manager().chips_in_play() == snapshot.total_bankroll;
     history_.push_back(snapshot);
 }

@@ -15,6 +15,7 @@ public:
 
     void inject(swarm::core::Swarm& swarm, std::int64_t amount);
     void burn(swarm::core::Swarm& swarm, std::int64_t amount);
+    void burn_external(std::int64_t amount);
 
     [[nodiscard]] bool invariants_hold() const noexcept;
     void require_invariants() const;

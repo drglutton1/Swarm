@@ -40,6 +40,7 @@ public:
     [[nodiscard]] const swarm::core::Ocean& ocean() const noexcept;
     [[nodiscard]] std::vector<swarm::core::Swarm>& swarms() noexcept;
     [[nodiscard]] const std::vector<swarm::core::Swarm>& swarms() const noexcept;
+    [[nodiscard]] const std::vector<swarm::core::Swarm>& dead_swarms() const noexcept;
     [[nodiscard]] swarm::economy::ChipManager& chip_manager() noexcept;
     [[nodiscard]] const swarm::economy::ChipManager& chip_manager() const noexcept;
     [[nodiscard]] swarm::util::Rng& rng() noexcept;
@@ -55,15 +56,19 @@ public:
     void register_offspring(std::uint64_t parent_a, std::uint64_t parent_b, std::uint64_t child_id);
     [[nodiscard]] std::vector<swarm::core::Swarm*> living_offspring_of(std::uint64_t parent_id);
     void refresh_ocean();
+    void rebuild_index();
+    void prune_dead();
 
 private:
     PopulationConfig config_{};
     swarm::core::Ocean ocean_{};
     std::vector<swarm::core::Swarm> swarms_{};
+    std::vector<swarm::core::Swarm> dead_swarms_{};
     swarm::economy::ChipManager chip_manager_{};
     swarm::util::Rng rng_{0};
     std::unordered_map<std::uint64_t, SwarmRuntimeState> runtime_{};
     std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> offspring_links_{};
+    std::unordered_map<std::uint64_t, std::size_t> id_to_index_{};
 };
 
 } // namespace swarm::sim

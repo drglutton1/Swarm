@@ -23,7 +23,7 @@ struct SimulationConfig {
     swarm::evolution::ReproductionPolicy reproduction{};
     std::uint64_t hands_per_table_block = 5;
     std::int64_t small_blind = 5;
-    std::int64_t big_blind = 10;
+    std::int64_t big_blind = 5;
     std::int64_t rake_per_hand = 0;
 };
 

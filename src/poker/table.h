@@ -62,8 +62,31 @@ struct ForcedRoundResult {
     std::vector<std::string> events;
 };
 
+struct DecisionContext {
+    enum class Street {
+        preflop,
+        flop,
+        turn,
+        river,
+    };
+
+    std::size_t player_index {0};
+    std::int64_t to_call {0};
+    std::int64_t current_bet {0};
+    std::int64_t min_raise_to {0};
+    std::int64_t pot {0};
+    std::int64_t stack {0};
+    std::size_t active_players {0};
+    std::size_t funded_players {0};
+    int hand_number {0};
+    Street street {Street::preflop};
+    std::vector<PlayerState> players;
+    std::vector<Card> board;
+};
+
 class Table {
 public:
+    using ActionChooser = std::function<ForcedAction(const DecisionContext&)>;
     Table(int player_count, std::int64_t starting_stack, std::int64_t small_blind, std::int64_t big_blind, std::int64_t rake_per_hand, std::uint64_t seed)
         : small_blind_(small_blind), big_blind_(big_blind), flop_rake_(rake_per_hand), pot_manager_(rake_per_hand), rng_(seed) {
         players_.reserve(player_count);
@@ -75,7 +98,7 @@ public:
         button_index_ = players_.empty() ? 0 : players_.size() - 1;
     }
 
-    HandLog play_hand(int hand_number, bool verbose) {
+    HandLog play_hand(int hand_number, bool verbose, const ActionChooser& chooser = {}) {
         HandLog log {hand_number, {}};
         if (funded_player_count() < 2) {
             if (verbose) {
@@ -104,7 +127,7 @@ public:
 
         deal_hole_cards(dealer, verbose, log);
 
-        if (!betting_round(next_funded_player(bb), big_blind_, big_blind_, "Preflop", log, verbose)) {
+        if (!betting_round(next_funded_player(bb), big_blind_, big_blind_, "Preflop", log, verbose, hand_number, DecisionContext::Street::preflop, chooser)) {
             return award_uncontested(log, verbose);
         }
 
@@ -113,35 +136,35 @@ public:
         board_.push_back(deck_.draw());
         apply_street_rake(Street::flop);
         log_board("Flop", log, verbose);
-        if (!betting_round(next_funded_player(dealer), 0, big_blind_, "Flop", log, verbose)) {
+        if (!betting_round(next_funded_player(dealer), 0, big_blind_, "Flop", log, verbose, hand_number, DecisionContext::Street::flop, chooser)) {
             return award_uncontested(log, verbose);
         }
 
         board_.push_back(deck_.draw());
         apply_street_rake(Street::turn);
         log_board("Turn", log, verbose);
-        if (!betting_round(next_funded_player(dealer), 0, big_blind_, "Turn", log, verbose)) {
+        if (!betting_round(next_funded_player(dealer), 0, big_blind_, "Turn", log, verbose, hand_number, DecisionContext::Street::turn, chooser)) {
             return award_uncontested(log, verbose);
         }
 
         board_.push_back(deck_.draw());
         apply_street_rake(Street::river);
         log_board("River", log, verbose);
-        if (!betting_round(next_funded_player(dealer), 0, big_blind_, "River", log, verbose)) {
+        if (!betting_round(next_funded_player(dealer), 0, big_blind_, "River", log, verbose, hand_number, DecisionContext::Street::river, chooser)) {
             return award_uncontested(log, verbose);
         }
 
         return showdown(log, verbose);
     }
 
-    SimulationSummary run(int hands, bool verbose, std::ostream& os) {
+    SimulationSummary run(int hands, bool verbose, std::ostream& os, const ActionChooser& chooser = {}) {
         const auto start = std::chrono::steady_clock::now();
         int actually_played = 0;
         for (int hand = 1; hand <= hands; ++hand) {
             if (funded_player_count() < 2) {
                 break;
             }
-            const HandLog log = play_hand(hand, verbose);
+            const HandLog log = play_hand(hand, verbose, chooser);
             ++actually_played;
             if (verbose) {
                 os << "=== Hand " << log.hand_number << " ===\n";
@@ -167,6 +190,10 @@ public:
     void set_player_stack_for_test(std::size_t player_index, std::int64_t stack) {
         players_.at(player_index).stack = stack;
         initial_total_chips_ = total_chips();
+    }
+
+    void set_player_name(std::size_t player_index, std::string name) {
+        players_.at(player_index).name = std::move(name);
     }
 
     void set_button_for_test(std::size_t button_index) {
@@ -204,14 +231,14 @@ public:
 
         std::size_t script_index = 0;
         HandLog log {0, {}};
-        const auto chooser = [&](std::size_t, std::int64_t, std::int64_t, std::int64_t) {
+        const auto chooser = [&](const DecisionContext&) {
             if (script_index >= script.size()) {
                 return ForcedAction{};
             }
             return script[script_index++];
         };
 
-        const bool hand_continues = betting_round_impl(start_index, current_bet, min_raise, street_name, log, verbose, chooser);
+        const bool hand_continues = betting_round_impl(start_index, current_bet, min_raise, street_name, log, verbose, 0, DecisionContext::Street::preflop, chooser);
         ForcedRoundResult result;
         result.hand_continues = hand_continues;
         result.current_bet = current_bet_;
@@ -408,7 +435,7 @@ private:
         }
     }
 
-    template <typename ActionChooser>
+    template <typename ActionChooserT>
     bool betting_round_impl(
         std::size_t start_index,
         std::int64_t current_bet,
@@ -416,7 +443,9 @@ private:
         const std::string& street_name,
         HandLog& log,
         bool verbose,
-        ActionChooser chooser) {
+        int hand_number,
+        DecisionContext::Street street,
+        ActionChooserT chooser) {
 
         current_bet_ = current_bet;
         min_raise_to_ = current_bet + std::max<std::int64_t>(min_raise, big_blind_);
@@ -439,7 +468,20 @@ private:
 
             auto& player = players_[cursor];
             const std::int64_t to_call = std::max<std::int64_t>(0, current_bet_ - player.street_commitment);
-            ForcedAction action = chooser(cursor, to_call, current_bet_, min_raise_to_);
+            const DecisionContext context{
+                cursor,
+                to_call,
+                current_bet_,
+                min_raise_to_,
+                pot_manager_.pot(),
+                player.stack,
+                active_player_count(),
+                funded_player_count(),
+                hand_number,
+                street,
+                players_,
+                board_};
+            ForcedAction action = chooser(context);
             const auto before_commitment = player.street_commitment;
             const auto before_bet = current_bet_;
 
@@ -534,23 +576,35 @@ private:
         return active_player_count() > 1;
     }
 
-    bool betting_round(std::size_t start_index, std::int64_t current_bet, std::int64_t min_raise, const std::string& street_name, HandLog& log, bool verbose) {
-        const auto chooser = [&](std::size_t cursor, std::int64_t to_call, std::int64_t current_bet_now, std::int64_t min_raise_to_now) {
-            const auto& player = players_[cursor];
+    bool betting_round(
+        std::size_t start_index,
+        std::int64_t current_bet,
+        std::int64_t min_raise,
+        const std::string& street_name,
+        HandLog& log,
+        bool verbose,
+        int hand_number,
+        DecisionContext::Street street,
+        const ActionChooser& chooser = {}) {
+        const auto effective_chooser = [&](const DecisionContext& context) {
+            if (chooser) {
+                return chooser(context);
+            }
+            const auto& player = players_[context.player_index];
             const double roll = rng_.uniform_real();
-            if (to_call > 0 && roll < 0.18) {
+            if (context.to_call > 0 && roll < 0.18) {
                 return ForcedAction{ForcedAction::Type::fold, 0};
             }
-            const bool can_raise = player.stack > to_call;
-            if (can_raise && roll > (to_call > 0 ? 0.78 : 0.88)) {
-                std::int64_t target = std::max(min_raise_to_now, current_bet_now + big_blind_);
+            const bool can_raise = player.stack > context.to_call;
+            if (can_raise && roll > (context.to_call > 0 ? 0.78 : 0.88)) {
+                std::int64_t target = std::max(context.min_raise_to, context.current_bet + big_blind_);
                 target = std::min(target, player.street_commitment + player.stack);
                 return ForcedAction{ForcedAction::Type::raise_to, target};
             }
             return ForcedAction{ForcedAction::Type::check_call, 0};
         };
 
-        return betting_round_impl(start_index, current_bet, min_raise, street_name, log, verbose, chooser);
+        return betting_round_impl(start_index, current_bet, min_raise, street_name, log, verbose, hand_number, street, effective_chooser);
     }
 
     [[nodiscard]] bool any_needs_action(const std::vector<bool>& needs_action) const noexcept {
