@@ -1,0 +1,51 @@
+agent: darwin
+project: swarm_poker_ecosystem
+version: 1
+updated: 2026-03-13T23:55:00Z
+current_phase: 7
+current_task: "phase 7 corrective pass completed; next focus is scheduler/activity pressure tuning plus richer integrated action telemetry"
+blocker: "correctness blockers cleared; current main risk is overly sleep-heavy activity cadence suppressing table volume"
+phases:
+  1_poker_engine: {status: done, hands_sec: 248000, tests: pass, notes: "full NLHE verified; 5/5 blinds; chip conservation"}
+  2_core_entities: {status: done, notes: "two-chromosome swarm core aligned; governance parity enforced"}
+  3_economy: {status: done, notes: "external rake burns tracked through ChipManager; integrated accounting verified"}
+  4_lifecycle: {status: done, notes: "death/inheritance wiring active; dead swarms pruned from active population"}
+  5_social: {status: done, notes: "mate selection bounded by parity partitioning + candidate sampling"}
+  6_scheduler: {status: partial, notes: "functional but currently too sleep-heavy for rich integrated play volume"}
+  7_simulation: {status: done, notes: "integrated tables now use swarm.decide(); 1000-block validation kept accounting healthy"}
+  8_observe: {status: partial, notes: "statistics exist, but richer action-diversity telemetry still needed"}
+decisions:
+  - blinds: "SB=5, BB=5"
+  - rake: "tracked as external burn from integrated table settlement"
+  - reproduction: "EVEN x ODD parity, chromosomal"
+  - swarm_size: "randint(2,9)+randint(2,9), min 4, max 18"
+  - ocean_size: "10M float32 target; current dev substrate smaller"
+  - target_swarms: 100000
+  - language: "C++17, no POSIX, std::thread only"
+  - compiler: "mingw g++"
+  - governance: "odd=alpha-led, even=democratic"
+compiler: g++
+compile_cmd: 'C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp src/sim/population.cpp src/sim/statistics.cpp src/sim/simulation.cpp -o test_poker.exe'
+os: Windows 11
+hardware: "i9, 32GB DDR5, RTX 3070"
+changed_files:
+  - src/economy/chip_manager.h
+  - src/economy/chip_manager.cpp
+  - src/poker/table.h
+  - src/sim/population.h
+  - src/sim/population.cpp
+  - src/sim/simulation.h
+  - src/sim/simulation.cpp
+  - src/sim/statistics.cpp
+  - src/main.cpp
+  - test/test_poker.cpp
+  - STATUS.md
+  - darwin_core.yaml
+bugs:
+  - "scheduler cadence still collapses to near-total sleep after a brief burst, starving integrated table volume"
+benchmarks:
+  - {phase: 1, metric: "hands/sec", value: 248000, date: "2026-03-11"}
+  - {phase: 7, metric: "1000 blocks / 100 swarms", value: "~0.04s", date: "2026-03-13"}
+learnings:
+  - "Integrated chip accounting must treat table rake as an explicit external burn; otherwise the ecosystem silently drifts"
+  - "Correctness improved materially, but scheduler pressure now stands out as the main obstacle to meaningful simulation dynamics"
