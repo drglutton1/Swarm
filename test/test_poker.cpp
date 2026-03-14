@@ -919,10 +919,13 @@ void test_simulation_step_preserves_chip_accounting_and_advances_state() {
 
     require(result.time.hand_block == 1, "simulation step advances one hand block");
     require(result.chip_accounting_ok, "simulation step preserves chip accounting");
-    require(latest.total_bankroll == chips_before, "total bankroll matches chips in play after one block");
-    require(simulation.population().chip_manager().chips_in_play() == chips_before, "chip manager chips in play remain stable without burns/injections dominating first step");
+    require(latest.total_bankroll == simulation.population().chip_manager().chips_in_play(), "total bankroll matches chips in play after one block");
+    require(simulation.population().chip_manager().chips_in_play() <= chips_before + static_cast<std::int64_t>((latest.total_swarms - swarms_before) * swarm::core::Swarm::starting_bankroll), "chip manager reflects burns and any injected offspring bankroll");
+    require(result.active_rest_cost == latest.active_rest_cost, "block result exposes active rest costs");
+    require(result.sleep_cost == latest.sleep_cost, "block result exposes sleep costs");
     require(latest.total_swarms >= swarms_before, "simulation maintains or grows swarm population after reproduction pass");
     require(latest.playing_swarms + latest.resting_swarms + latest.sleeping_swarms == latest.total_swarms, "every swarm has an activity bucket");
+    require(latest.block_sleep_ratio >= 0.30, "block activity keeps at least 30 percent sleep");
 }
 
 void test_simulation_tracks_rake_as_external_burn() {

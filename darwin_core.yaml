@@ -1,22 +1,23 @@
 agent: darwin
 project: swarm_poker_ecosystem
 version: 1
-updated: 2026-03-13T23:55:00Z
+updated: 2026-03-14T06:55:00Z
 current_phase: 7
-current_task: "phase 7 corrective pass completed; next focus is scheduler/activity pressure tuning plus richer integrated action telemetry"
-blocker: "correctness blockers cleared; current main risk is overly sleep-heavy activity cadence suppressing table volume"
+current_task: "stabilization pass implemented: activity costs + richer telemetry are in; scheduler remains behaviorally weak and needs another tuning pass before serious runs"
+blocker: "integrated accounting is healthy, but ecosystem cadence still collapses quickly into bankruptcy-heavy dynamics with insufficient sustained table formation"
 phases:
   1_poker_engine: {status: done, hands_sec: 248000, tests: pass, notes: "full NLHE verified; 5/5 blinds; chip conservation"}
   2_core_entities: {status: done, notes: "two-chromosome swarm core aligned; governance parity enforced"}
-  3_economy: {status: done, notes: "external rake burns tracked through ChipManager; integrated accounting verified"}
-  4_lifecycle: {status: done, notes: "death/inheritance wiring active; dead swarms pruned from active population"}
+  3_economy: {status: done, notes: "external rake burns and activity burns tracked through ChipManager; integrated accounting verified"}
+  4_lifecycle: {status: done, notes: "death/inheritance wiring active; death causes now surfaced in stats"}
   5_social: {status: done, notes: "mate selection bounded by parity partitioning + candidate sampling"}
-  6_scheduler: {status: partial, notes: "functional but currently too sleep-heavy for rich integrated play volume"}
-  7_simulation: {status: done, notes: "integrated tables now use swarm.decide(); 1000-block validation kept accounting healthy"}
-  8_observe: {status: partial, notes: "statistics exist, but richer action-diversity telemetry still needed"}
+  6_scheduler: {status: partial, notes: "rebalanced and minimum sleep still enforced, but activity cadence is still not behaviorally healthy in integrated validation"}
+  7_simulation: {status: done, notes: "integrated tables use swarm.decide(); 200/1000-block validation kept accounting healthy under activity burns + reproduction + rake plumbing"}
+  8_observe: {status: done, notes: "action diversity, reproduction attempts/successes, death causes, activity ratios, and activity costs are now emitted in stats JSON"}
 decisions:
   - blinds: "SB=5, BB=5"
   - rake: "tracked as external burn from integrated table settlement"
+  - activity_costs: "active_rest=15 and sleep=5 per 30-hand-equivalent block"
   - reproduction: "EVEN x ODD parity, chromosomal"
   - swarm_size: "randint(2,9)+randint(2,9), min 4, max 18"
   - ocean_size: "10M float32 target; current dev substrate smaller"
@@ -29,23 +30,23 @@ compile_cmd: 'C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker
 os: Windows 11
 hardware: "i9, 32GB DDR5, RTX 3070"
 changed_files:
-  - src/economy/chip_manager.h
-  - src/economy/chip_manager.cpp
-  - src/poker/table.h
+  - src/evolution/reproduction.cpp
+  - src/scheduler/activity_scheduler.cpp
   - src/sim/population.h
-  - src/sim/population.cpp
   - src/sim/simulation.h
   - src/sim/simulation.cpp
+  - src/sim/statistics.h
   - src/sim/statistics.cpp
-  - src/main.cpp
   - test/test_poker.cpp
   - STATUS.md
   - darwin_core.yaml
 bugs:
-  - "scheduler cadence still collapses to near-total sleep after a brief burst, starving integrated table volume"
+  - "scheduler/activity cadence still does not sustain healthy long-horizon table formation"
+  - "integrated runs still collapse into bankruptcy-heavy dynamics too quickly"
 benchmarks:
   - {phase: 1, metric: "hands/sec", value: 248000, date: "2026-03-11"}
-  - {phase: 7, metric: "1000 blocks / 100 swarms", value: "~0.04s", date: "2026-03-13"}
+  - {phase: 7, metric: "1000 blocks / 100 swarms", value: "accounting healthy; behavior still weak", date: "2026-03-14"}
 learnings:
-  - "Integrated chip accounting must treat table rake as an explicit external burn; otherwise the ecosystem silently drifts"
-  - "Correctness improved materially, but scheduler pressure now stands out as the main obstacle to meaningful simulation dynamics"
+  - "Activity costs can be integrated cleanly through ChipManager without breaking accounting invariants"
+  - "Better telemetry helps, but the scheduler is still the main blocker to meaningful ecosystem behavior"
+  - "Current deaths are dominated by bankruptcy, which is a useful signal that cadence/economics still need tuning rather than storytelling"

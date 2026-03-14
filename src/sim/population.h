@@ -26,6 +26,7 @@ struct SwarmRuntimeState {
     std::uint64_t total_hands_played_in_sim = 0;
     std::uint64_t tables_sat = 0;
     std::uint64_t offspring_born_in_sim = 0;
+    std::uint64_t action_counts[3] = {0, 0, 0};
 };
 
 class Population {

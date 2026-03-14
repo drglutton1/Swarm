@@ -37,9 +37,15 @@ ReproductionResult reproduce(
 
     const auto& first_source = pick_parent_chromosome(first, rng);
     const auto& second_source = pick_parent_chromosome(second, rng);
+    if (first_source.blueprint().empty() || second_source.blueprint().empty()) {
+        return {false, "parent chromosome blueprint unexpectedly empty", std::nullopt};
+    }
     auto crossed = maybe_crossover(first_source.blueprint(), second_source.blueprint(), rng, policy.crossover);
     mutate_genome(crossed.first, ocean_size, rng, policy.mutation);
     mutate_genome(crossed.second, ocean_size, rng, policy.mutation);
+    if (crossed.first.empty() || crossed.second.empty()) {
+        return {false, "offspring blueprint collapsed to empty genome", std::nullopt};
+    }
 
     crossed.first.chromosome_agent_count = std::clamp<std::uint32_t>(crossed.first.chromosome_agent_count == 0 ? static_cast<std::uint32_t>(first_source.size()) : crossed.first.chromosome_agent_count, 2, 9);
     crossed.second.chromosome_agent_count = std::clamp<std::uint32_t>(crossed.second.chromosome_agent_count == 0 ? static_cast<std::uint32_t>(second_source.size()) : crossed.second.chromosome_agent_count, 2, 9);

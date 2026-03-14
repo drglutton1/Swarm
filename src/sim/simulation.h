@@ -33,7 +33,25 @@ struct BlockResult {
     std::uint64_t hands_resolved = 0;
     std::size_t offspring_born = 0;
     std::size_t deaths_processed = 0;
+    std::int64_t active_rest_cost = 0;
+    std::int64_t sleep_cost = 0;
     bool chip_accounting_ok = false;
+};
+
+struct BlockTelemetry {
+    std::uint64_t fold_actions = 0;
+    std::uint64_t check_call_actions = 0;
+    std::uint64_t raise_actions = 0;
+    std::size_t reproduction_attempts = 0;
+    std::size_t reproduction_successes = 0;
+    std::size_t deaths_age = 0;
+    std::size_t deaths_bankruptcy = 0;
+    std::size_t deaths_other = 0;
+    std::size_t active_play = 0;
+    std::size_t active_rest = 0;
+    std::size_t active_sleep = 0;
+    std::int64_t active_rest_cost = 0;
+    std::int64_t sleep_cost = 0;
 };
 
 class Simulation {
@@ -60,9 +78,10 @@ private:
     swarm::scheduler::TableManager table_manager_{};
     StatisticsCollector statistics_{};
 
-    void process_deaths(std::size_t& death_count);
-    std::size_t attempt_social_reproduction();
-    std::uint64_t run_table_block(const swarm::scheduler::TableAssignment& assignment, std::uint64_t seed_offset);
+    void process_deaths(std::size_t& death_count, BlockTelemetry& telemetry);
+    std::size_t attempt_social_reproduction(BlockTelemetry& telemetry);
+    std::int64_t apply_activity_costs(const BlockTelemetry& telemetry, std::int64_t& active_rest_cost, std::int64_t& sleep_cost);
+    std::uint64_t run_table_block(const swarm::scheduler::TableAssignment& assignment, std::uint64_t seed_offset, BlockTelemetry& telemetry);
 };
 
 } // namespace swarm::sim

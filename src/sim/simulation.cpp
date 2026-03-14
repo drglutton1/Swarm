@@ -1,6 +1,7 @@
 #include "simulation.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -72,6 +73,9 @@ swarm::poker::ForcedAction map_decision_to_action(
             return {swarm::poker::ForcedAction::Type::check_call, 0};
         case swarm::core::ActionType::raise: {
             const std::int64_t max_raise_to = context.players[context.player_index].street_commitment + context.stack;
+            if (max_raise_to < context.min_raise_to) {
+                return {swarm::poker::ForcedAction::Type::check_call, 0};
+            }
             const std::int64_t requested_raise = context.current_bet + static_cast<std::int64_t>(std::llround(decision.raise_amount));
             const std::int64_t target = std::clamp(requested_raise, context.min_raise_to, max_raise_to);
             if (target <= context.current_bet) {
@@ -81,6 +85,10 @@ swarm::poker::ForcedAction map_decision_to_action(
         }
     }
     return {swarm::poker::ForcedAction::Type::check_call, 0};
+}
+
+std::size_t action_index(swarm::core::ActionType action) {
+    return static_cast<std::size_t>(action);
 }
 
 } // namespace
@@ -104,13 +112,10 @@ const StatisticsCollector& Simulation::statistics() const noexcept { return stat
 BlockResult Simulation::step_block() {
     population_.refresh_ocean();
 
-    for (auto& swarm : population_.swarms()) {
-        swarm::evolution::apply_mortality(swarm, config_.lifecycle);
-    }
-
+    BlockTelemetry telemetry;
     std::size_t deaths_processed = 0;
-    process_deaths(deaths_processed);
-    const std::size_t offspring_born = attempt_social_reproduction();
+    process_deaths(deaths_processed, telemetry);
+    const std::size_t offspring_born = attempt_social_reproduction(telemetry);
 
     std::vector<swarm::scheduler::SchedulingPassEntry> entries;
     entries.reserve(population_.swarms().size());
@@ -118,19 +123,36 @@ BlockResult Simulation::step_block() {
         const auto lifecycle = swarm::evolution::evaluate(swarm, config_.lifecycle);
         auto& runtime = population_.runtime_state(swarm.id());
         runtime.activity = activity_scheduler_.next_state(swarm, lifecycle, time_.now(), runtime.activity.total_ticks == 0 ? nullptr : &runtime.activity);
+        switch (runtime.activity.mode) {
+            case swarm::scheduler::ActivityMode::play:
+                ++telemetry.active_play;
+                break;
+            case swarm::scheduler::ActivityMode::active_rest:
+                ++telemetry.active_rest;
+                break;
+            case swarm::scheduler::ActivityMode::sleep:
+                ++telemetry.active_sleep;
+                break;
+        }
         entries.push_back({&swarm, runtime.activity.mode, lifecycle});
     }
+
+    std::int64_t active_rest_cost = 0;
+    std::int64_t sleep_cost = 0;
+    apply_activity_costs(telemetry, active_rest_cost, sleep_cost);
+    telemetry.active_rest_cost = active_rest_cost;
+    telemetry.sleep_cost = sleep_cost;
 
     const auto plan = table_manager_.build_plan(entries);
     std::uint64_t hands_resolved = 0;
     for (std::size_t i = 0; i < plan.tables.size(); ++i) {
-        hands_resolved += run_table_block(plan.tables[i], static_cast<std::uint64_t>(i));
+        hands_resolved += run_table_block(plan.tables[i], static_cast<std::uint64_t>(i), telemetry);
     }
 
     const auto now = time_.advance_hand_blocks(1);
-    statistics_.capture(population_, now, plan.tables.size(), hands_resolved, offspring_born, deaths_processed);
+    statistics_.capture(population_, now, plan.tables.size(), hands_resolved, offspring_born, deaths_processed, telemetry);
 
-    return {now, plan.tables.size(), hands_resolved, offspring_born, deaths_processed,
+    return {now, plan.tables.size(), hands_resolved, offspring_born, deaths_processed, active_rest_cost, sleep_cost,
         population_.chip_manager().invariants_hold() && population_.chip_manager().chips_in_play() == statistics_.latest().total_bankroll};
 }
 
@@ -144,8 +166,10 @@ std::string Simulation::latest_statistics_json() const {
     return statistics_.to_json();
 }
 
-void Simulation::process_deaths(std::size_t& death_count) {
+void Simulation::process_deaths(std::size_t& death_count, BlockTelemetry& telemetry) {
     for (auto& swarm : population_.swarms()) {
+        const bool age_death = swarm.hands_played() >= config_.lifecycle.death_hands;
+        const bool bankruptcy_death = swarm.bankroll() <= 0;
         const auto lifecycle = swarm::evolution::evaluate(swarm, config_.lifecycle);
         if (lifecycle.alive || !swarm.alive()) {
             continue;
@@ -154,11 +178,18 @@ void Simulation::process_deaths(std::size_t& death_count) {
         auto offspring = population_.living_offspring_of(swarm.id());
         swarm::economy::InheritanceService::distribute_on_death(swarm, offspring, population_.chip_manager());
         ++death_count;
+        if (age_death) {
+            ++telemetry.deaths_age;
+        } else if (bankruptcy_death) {
+            ++telemetry.deaths_bankruptcy;
+        } else {
+            ++telemetry.deaths_other;
+        }
     }
     population_.prune_dead();
 }
 
-std::size_t Simulation::attempt_social_reproduction() {
+std::size_t Simulation::attempt_social_reproduction(BlockTelemetry& telemetry) {
     std::unordered_set<std::uint64_t> paired_this_block;
     std::size_t births = 0;
 
@@ -192,7 +223,7 @@ std::size_t Simulation::attempt_social_reproduction() {
         candidates.reserve(std::min(candidate_sample_limit, pool_ids.size()));
         knowledge.reserve(std::min(candidate_sample_limit, pool_ids.size()));
 
-        const std::size_t offset = pool_ids.empty() ? 0 : static_cast<std::size_t>(population_.rng().next_int<std::uint32_t>(0, static_cast<std::uint32_t>(pool_ids.size() - 1)));
+        const std::size_t offset = static_cast<std::size_t>(population_.rng().next_int<std::uint32_t>(0, static_cast<std::uint32_t>(pool_ids.size() - 1)));
         for (std::size_t attempt = 0; attempt < pool_ids.size() && candidates.size() < candidate_sample_limit; ++attempt) {
             const auto candidate_id = pool_ids[(offset + attempt) % pool_ids.size()];
             auto* candidate = population_.find_swarm(candidate_id);
@@ -224,6 +255,7 @@ std::size_t Simulation::attempt_social_reproduction() {
             continue;
         }
 
+        ++telemetry.reproduction_attempts;
         auto result = swarm::evolution::reproduce(seeker, *partner, config_.population.state_size,
             static_cast<std::uint32_t>(config_.population.ocean_size), population_.rng(), config_.reproduction);
         if (!result.success || !result.offspring.has_value()) {
@@ -241,12 +273,37 @@ std::size_t Simulation::attempt_social_reproduction() {
         paired_this_block.insert(seeker.id());
         paired_this_block.insert(partner->id());
         ++births;
+        ++telemetry.reproduction_successes;
     }
 
     return births;
 }
 
-std::uint64_t Simulation::run_table_block(const swarm::scheduler::TableAssignment& assignment, std::uint64_t seed_offset) {
+std::int64_t Simulation::apply_activity_costs(const BlockTelemetry& telemetry, std::int64_t& active_rest_cost, std::int64_t& sleep_cost) {
+    active_rest_cost = static_cast<std::int64_t>(telemetry.active_rest) * 15;
+    sleep_cost = static_cast<std::int64_t>(telemetry.active_sleep) * 5;
+
+    for (auto& swarm : population_.swarms()) {
+        auto& runtime = population_.runtime_state(swarm.id());
+        std::int64_t cost = 0;
+        if (runtime.activity.mode == swarm::scheduler::ActivityMode::active_rest) {
+            cost = 15;
+        } else if (runtime.activity.mode == swarm::scheduler::ActivityMode::sleep) {
+            cost = 5;
+        }
+        if (cost <= 0) {
+            continue;
+        }
+        const auto actual_cost = std::min<std::int64_t>(swarm.bankroll(), cost);
+        if (actual_cost > 0) {
+            population_.chip_manager().burn(swarm, actual_cost);
+        }
+    }
+
+    return active_rest_cost + sleep_cost;
+}
+
+std::uint64_t Simulation::run_table_block(const swarm::scheduler::TableAssignment& assignment, std::uint64_t seed_offset, BlockTelemetry& telemetry) {
     if (assignment.swarm_ids.size() < 2) {
         return 0;
     }
@@ -276,6 +333,22 @@ std::uint64_t Simulation::run_table_block(const swarm::scheduler::TableAssignmen
         auto* swarm = seated.at(context.player_index);
         const auto state = make_state_vector(context);
         const auto decision = swarm->decide(population_.ocean(), state, static_cast<std::size_t>(context.hand_number));
+        const auto idx = action_index(decision.action);
+        auto& runtime = population_.runtime_state(swarm->id());
+        if (idx < 3) {
+            ++runtime.action_counts[idx];
+        }
+        switch (decision.action) {
+            case swarm::core::ActionType::fold:
+                ++telemetry.fold_actions;
+                break;
+            case swarm::core::ActionType::check_call:
+                ++telemetry.check_call_actions;
+                break;
+            case swarm::core::ActionType::raise:
+                ++telemetry.raise_actions;
+                break;
+        }
         return map_decision_to_action(decision, context);
     };
 
