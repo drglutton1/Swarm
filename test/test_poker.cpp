@@ -16,6 +16,9 @@
 #include "../src/social/mate_selection.h"
 #include "../src/poker/hand_evaluator.h"
 #include "../src/poker/table.h"
+#include "../src/scheduler/time_manager.h"
+#include "../src/scheduler/activity_scheduler.h"
+#include "../src/scheduler/table_manager.h"
 #include "../src/util/rng.h"
 
 using swarm::poker::Card;
@@ -747,6 +750,113 @@ void test_mate_selection_respects_eligibility_and_parity() {
     require(selection.partner->id() == best.id(), "mate selection prefers eligible parity-compatible mature partner");
 }
 
+void test_time_manager_tracks_ticks_and_hand_blocks() {
+    swarm::scheduler::TimeManager time({25, 5});
+    auto now = time.advance_tick(3);
+    require(now.tick == 3, "time manager advances ticks");
+    require(now.hand_block == 0, "hand block stays put within block window");
+    require(now.tick_in_block == 3, "tick within block is tracked");
+
+    now = time.advance_tick(2);
+    require(now.tick == 5, "time manager accumulates ticks");
+    require(now.hand_block == 1, "tick rollover advances hand block");
+    require(now.hands_elapsed == 25, "hands elapsed follows completed hand blocks");
+    require(now.tick_in_block == 0, "tick in block wraps after rollover");
+
+    now = time.advance_hand_blocks(2);
+    require(now.hand_block == 3, "explicit hand block advance works");
+    require(now.hands_elapsed == 75, "explicit hand block advance updates hands elapsed");
+}
+
+void test_scheduler_enforces_minimum_sleep_ratio() {
+    swarm::util::Rng rng(9001);
+    auto swarm = make_swarm(2, 3, rng);
+    swarm.set_hands_played(20000);
+
+    swarm::scheduler::ActivityScheduler scheduler;
+    swarm::scheduler::ActivityState state;
+    swarm::scheduler::TimeManager time;
+    for (int tick = 0; tick < 10; ++tick) {
+        const auto lifecycle = swarm::evolution::evaluate(swarm);
+        state = scheduler.next_state(swarm, lifecycle, time.now(), tick == 0 ? nullptr : &state);
+        time.advance_tick();
+    }
+
+    require(state.total_ticks == 10, "activity scheduler tracks total ticks");
+    require(state.sleep_ticks >= 3, "activity scheduler enforces at least 30 percent sleep per cycle");
+}
+
+void test_table_manager_prevents_double_booking_and_fills_full_table() {
+    swarm::util::Rng rng(777);
+    std::vector<swarm::core::Swarm> swarms;
+    swarms.reserve(8);
+    std::vector<swarm::scheduler::SchedulingPassEntry> entries;
+    entries.reserve(8);
+    for (int i = 0; i < 8; ++i) {
+        auto& swarm = swarms.emplace_back(make_swarm(2, 2, rng));
+        swarm.set_hands_played(20000);
+        entries.push_back({&swarm, swarm::scheduler::ActivityMode::play, swarm::evolution::evaluate(swarm)});
+    }
+
+    swarm::scheduler::TableManager manager;
+    const auto plan = manager.build_plan(entries);
+    require(plan.tables.size() == 1, "eight eligible swarms form one table");
+    require(plan.tables.front().swarm_ids.size() == 8, "full table targets eight swarms");
+
+    std::vector<std::uint64_t> assigned = plan.tables.front().swarm_ids;
+    std::sort(assigned.begin(), assigned.end());
+    require(std::adjacent_find(assigned.begin(), assigned.end()) == assigned.end(), "no swarm is double-booked in a pass");
+}
+
+void test_table_manager_handles_leftovers_gracefully() {
+    swarm::util::Rng rng(888);
+    std::vector<swarm::core::Swarm> swarms;
+    swarms.reserve(17);
+    std::vector<swarm::scheduler::SchedulingPassEntry> entries;
+    entries.reserve(17);
+    for (int i = 0; i < 17; ++i) {
+        auto& swarm = swarms.emplace_back(make_swarm(2, 3, rng));
+        swarm.set_hands_played(20000);
+        entries.push_back({&swarm, swarm::scheduler::ActivityMode::play, swarm::evolution::evaluate(swarm)});
+    }
+
+    swarm::scheduler::TableManager manager;
+    const auto plan = manager.build_plan(entries);
+    require(plan.tables.size() == 2, "seventeen players yield two full tables");
+    require(plan.tables[0].swarm_ids.size() == 8 && plan.tables[1].swarm_ids.size() == 8, "full tables are filled before leftovers are deferred");
+    require(plan.deferred_swarm_ids.size() == 1, "single leftover swarm is gracefully deferred instead of solo-seated");
+
+    std::vector<swarm::scheduler::SchedulingPassEntry> short_entries;
+    short_entries.reserve(10);
+    for (int i = 0; i < 10; ++i) {
+        short_entries.push_back(entries[i]);
+    }
+    const auto short_plan = manager.build_plan(short_entries);
+    require(short_plan.tables.size() == 2, "ten players produce one full table and one short table");
+    require(short_plan.tables[0].swarm_ids.size() == 8, "first short-plan table stays full");
+    require(short_plan.tables[1].swarm_ids.size() == 2, "leftover policy creates a short table when at least two swarms remain");
+}
+
+void test_table_manager_uses_activity_and_lifecycle_for_eligibility() {
+    swarm::util::Rng rng(999);
+    auto playing = make_swarm(2, 3, rng);
+    auto resting = make_swarm(2, 3, rng);
+    auto dead = make_swarm(2, 3, rng);
+
+    playing.set_hands_played(20000);
+    resting.set_hands_played(20000);
+    dead.set_hands_played(100000);
+
+    swarm::scheduler::TableManager manager;
+    const auto plan = manager.build_plan({
+        {&playing, swarm::scheduler::ActivityMode::play, swarm::evolution::evaluate(playing)},
+        {&resting, swarm::scheduler::ActivityMode::active_rest, swarm::evolution::evaluate(resting)},
+        {&dead, swarm::scheduler::ActivityMode::play, swarm::evolution::evaluate(dead)}});
+
+    require(plan.tables.empty(), "insufficient eligible play-mode swarms produce no table");
+    require(plan.deferred_swarm_ids.size() == 1 && plan.deferred_swarm_ids[0] == playing.id(), "only living play-mode swarms remain eligible but can still be deferred");
+}
+
 } // namespace
 
 int main() {
@@ -775,6 +885,11 @@ int main() {
     test_default_policy_alignment();
     test_swarm_birth_distribution_sum_of_two_dice();
     test_mate_selection_respects_eligibility_and_parity();
+    test_time_manager_tracks_ticks_and_hand_blocks();
+    test_scheduler_enforces_minimum_sleep_ratio();
+    test_table_manager_prevents_double_booking_and_fills_full_table();
+    test_table_manager_handles_leftovers_gracefully();
+    test_table_manager_uses_activity_and_lifecycle_for_eligibility();
     std::cout << "PASS: test_poker\n";
     return 0;
 }
