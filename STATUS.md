@@ -1,156 +1,118 @@
 # Swarm Poker Ecosystem - Status
 
-## Stage A / Phase 7
+## Stage A / Phase 7 corrective pass
 
-Status: **verified Phase 7 simulation substrate implemented and locally smoke-tested.**
+Status: **critical Phase 7 blockers addressed; build/tests pass; integrated accounting now stays honest under rake.**
 
-This is the first real integration layer tying together:
-- swarm/core state
-- scheduler time + activity + table planning
-- poker table execution
-- economy accounting
-- lifecycle evaluation + mortality/inheritance hooks
-- social info exchange + mate selection hooks
-- reproduction into a growing population
-- structured simulation statistics output
+This pass fixed the issues that made the first Phase 7 substrate unsafe for serious simulation:
+- integrated tables now use `swarm.decide()` instead of the poker engine's built-in random bot policy
+- big blind defaults are back to the intended `5`
+- chip accounting now supports externally burned rake and remains invariant-safe in the integrated loop
+- population lookup is O(1) by swarm id for active swarms
+- dead swarms are pruned from the active container and retained separately for bookkeeping
+- default seeded population generation now uses the intended `randint(2,9) + randint(2,9)` chromosome-size distribution
+- reproduction partner search no longer scans every swarm pair; it uses parity partitioning plus bounded candidate sampling
 
-It is **not** a Phase 8 scale-up run. It is a cautious, testable substrate for stepping the ecosystem forward in blocks and checking whether the plumbing stays sane.
+## What is fixed
 
-## Phase 7 implemented
+### 1) Blind defaults corrected
+- `SimulationConfig.big_blind` is now `5` instead of `10`
+- the sample state in `main.cpp` was aligned with the same 5/5 blind baseline
 
-### 1) Population layer
+### 2) Integrated chip accounting repaired
+- `ChipManager` now supports `burn_external()` for rake that is already removed inside the poker table engine
+- integrated table settlement now enforces the invariant:
+  - **sum of ending swarm stacks = sum of starting swarm stacks - rake**
+  - all non-rake poker transfers remain zero-sum between swarms
+- simulation throws if a table block violates that invariant instead of silently drifting
+- nonzero-rake integrated runs now keep `chip_accounting_ok=true`
 
-Added `src/sim/population.h/.cpp`.
+### 3) Population lookup and dead-swarm cleanup
+- active swarms now maintain an `id -> index` map for O(1) lookup
+- dead swarms are moved out of the active swarm vector after death processing
+- dead swarms remain available in `dead_swarms()` so bookkeeping and post-mortem lookup stay coherent
 
-What it now supports:
-- a deterministic simulation population with:
-  - shared `Ocean`
-  - `std::vector<Swarm>`
-  - `ChipManager`
-  - seeded RNG
-  - per-swarm runtime/activity bookkeeping
-  - offspring linkage tracking for later inheritance
-- deterministic/testable initialization of a small-to-moderate swarm population
-- initial bankroll injection through the economy layer so chip accounting starts honest instead of relying on invisible bootstrap chips
-- seeded lifecycle staging across youth / maturity / old-age cohorts
+### 4) Swarm decisions are actually connected to poker play
+- integrated table blocks no longer use the table's random action chooser
+- the simulation now builds a real adapter:
+  - `Table::DecisionContext`
+  - `DecisionContext -> PokerStateVector`
+  - `swarm.decide(ocean, state)`
+  - decision mapped back into legal poker action (`fold`, `check/call`, `raise_to`)
+- table execution is therefore now driven by swarm brains during integrated simulation
 
-Honest note:
-- this is still an in-memory population substrate, not a persistence layer or distributed world model.
+### 5) Population/reproduction scaling pass
+- default seeded populations now follow the intended 2..9 + 2..9 distribution instead of the earlier narrow deterministic pattern
+- partner search is now parity-partitioned with bounded candidate sampling instead of effectively all-to-all scans every block
 
-### 2) Integrated simulation loop
+## Tests added/updated
 
-Added `src/sim/simulation.h/.cpp`.
-
-What it now supports:
-- stepping the world by **hand blocks**
-- per-block ocean refresh
-- per-swarm lifecycle evaluation
-- per-swarm scheduler activity updates using the Phase 6 scheduler substrate
-- table planning via `scheduler::TableManager`
-- actual table execution for assigned swarms through the existing poker engine
-- bankroll deltas written back into swarm state after poker play
-- swarm hand counters updated from real table execution
-- mortality pass + inheritance processing hooks
-- social-information gathering + mate-selection based reproduction attempt pass
-- population growth when reproduction succeeds
-
-Important constraint:
-- the integrated substrate currently uses **zero rake by default** inside the Phase 7 world loop so chip accounting remains exact. The first smoke run exposed that table rake was leaking outside the simulation economy accounting model. Rather than pretend that was solved, Phase 7 keeps rake off until a proper ecosystem sink/account is implemented.
-
-### 3) Statistics / output
-
-Added `src/sim/statistics.h/.cpp`.
-
-What it now supports:
-- block-by-block snapshots capturing:
-  - total / alive / dead swarm counts
-  - youth / mature / old-age counts
-  - reproduction-ready counts
-  - play / rest / sleep activity counts
-  - tables formed
-  - hands resolved
-  - births and processed deaths
-  - bankroll totals / min / max / average
-  - chip-accounting health flag
-- JSON-style structured output for analysis
-- `swarm_poker_sim.exe --simulate-blocks N [--population N] [--seed N]`
-
-### 4) Test coverage
-
-Updated `test/test_poker.cpp` with Phase 7 coverage for:
-- deterministic population initialization
-- initial chip-accounting correctness in the population layer
-- one integrated simulation block advancing time and preserving accounting
-- multi-block statistics history generation
-
-## Files created / changed in Phase 7
-
-### New files
-- `src/sim/population.h`
-- `src/sim/population.cpp`
-- `src/sim/statistics.h`
-- `src/sim/statistics.cpp`
-- `src/sim/simulation.h`
-- `src/sim/simulation.cpp`
-
-### Updated files
-- `CMakeLists.txt`
-- `src/main.cpp`
-- `test/test_poker.cpp`
-- `STATUS.md`
+`test/test_poker.cpp` now additionally covers:
+- external chip burns through `ChipManager`
+- dead-swarm pruning into a graveyard container
+- integrated simulation with nonzero rake while preserving accounting
+- existing simulation tests still pass after the corrective pass
 
 ## Verification performed
 
-### Build commands run
+### Build
 
-- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc src/main.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp src/sim/population.cpp src/sim/statistics.cpp src/sim/simulation.cpp -o swarm_poker_sim.exe`
-- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp src/sim/population.cpp src/sim/statistics.cpp src/sim/simulation.cpp -o test_poker.exe`
+Verified with the existing direct MinGW commands:
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc ... -o swarm_poker_sim.exe`
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc ... -o test_poker.exe`
 
 ### Test result
 
 - `test_poker.exe`
   - Result: **PASS**
 
-### Modest integrated smoke run
+### Integrated validation
 
 Command run:
-- `swarm_poker_sim.exe --simulate-blocks 10 --population 12 --seed 1337`
+- `swarm_poker_sim.exe --simulate-blocks 1000 --population 100 --seed 1337`
 
-What actually happened:
-- simulation ran successfully and emitted structured history
-- first four blocks had all swarms sleeping under the current scheduler cadence
-- blocks 5-10 formed **1 table per block**
-- each active block resolved **30 seated-hand participations** (`6` swarms seated for `5` hands)
-- bankrolls redistributed across participants while total bankroll remained exactly **60000**
-- chip accounting stayed **true** for all 10 blocks after switching the integrated loop to zero-rake mode
-- no births or processed deaths occurred during this short smoke run
+Observed results:
+- chip accounting status:
+  - **healthy for all 1000 blocks**
+  - non-rake chip movement stayed zero-sum within tables
+  - only rake was counted as burned
+- alive swarm count:
+  - started effectively at **96 alive** (4 seeded into old-age-death threshold during first pass)
+  - ended at **66 alive / 37 dead / 103 total historically tracked**
+- offspring:
+  - **3 births observed** over the run
+- tables / activity:
+  - max `tables_formed` in a block: **4**
+  - only **5 blocks** formed any tables at all in this configuration
+  - max `hands_resolved` in a block: **64 seated-hand participations**
+- decisions varying:
+  - integrated poker is now driven by `swarm.decide()` rather than random bots
+  - this pass did **not** add deep action-distribution telemetry yet, so variability is not richly quantified in the JSON output
+  - observed bankroll divergence and nonuniform table outcomes confirm the path is live, but decision diversity instrumentation is still a next-step gap
+- rough performance:
+  - local 1000-block / 100-swarm validation run completed in well under a second on this machine
 
-That is a real integrated run, but still a modest one.
+## Honest current limitations / remaining risks
 
-## Honest current limitations
-
-Phase 7 is real, but still intentionally conservative:
-- poker table execution is integrated as a substrate, not yet a swarm-brain-driven seat-by-seat decision bridge
-- social/reproduction is wired in, but the short smoke run did not yet produce offspring; this path is present but not yet richly validated under longer runs
-- mortality/inheritance plumbing exists, but the short local smoke run did not drive deep death cascades
-- no external persistence, checkpointing, or resume support
-- no large-scale benchmarking, overnight runs, or profiling yet
-- no ecosystem-level rake sink/account yet, which is why the integrated loop currently defaults to `rake_per_hand = 0`
-- scheduler behavior currently produces a very coarse cadence (sleep-heavy early blocks, then stable play blocks)
+The blockers are fixed, but the ecosystem is **not** yet behaviorally mature:
+- the scheduler currently becomes extremely sleep-heavy after a brief active window; most later blocks form no tables
+- because of that, evolutionary pressure is still too sparse for meaningful emergence claims
+- activity-cost pressure for `active_rest` / `sleep` was **not** implemented in this pass because the precise spec economics were not encoded clearly enough in the current codebase
+- alpha-led governance was inspected and existing advisor-sensitive tests still pass, but this pass did not add integrated governance telemetry
+- integrated output still lacks richer action-distribution / policy-diversity instrumentation
 
 ## Readiness assessment
 
-**Yes — the project is now ready for a cautious first real simulation run, but not yet a serious long-duration or high-scale ecosystem campaign.**
+**Yes — the project now looks ready for a cautious first real simulation run, but only as a guarded engineering run, not as a serious emergence study.**
 
-What "ready" means here:
-- the major subsystems are now actually threaded together
-- local tests pass
-- a modest integrated run completed
-- bankroll accounting remained sane
-- structured output exists for inspection
+What that means:
+- the main correctness blockers are no longer lying to you
+- accounting is trustworthy enough to run with rake
+- integrated poker uses actual swarm decisions
+- dead-swarm bookkeeping is sane
 
 What it does **not** mean:
-- not ready to claim emergent society results
-- not ready to claim reproduction dynamics are proven
-- not ready to claim economy sinks/sources beyond the current honest model
-- not ready to skip additional smoke runs, parameter tuning, and instrumentation before any overnight run
+- not ready to claim robust social emergence
+- not ready to claim reproduction dynamics are healthy
+- not ready to claim the scheduler/activity economy is tuned
+- not ready to skip the next pass of telemetry + scheduler pressure tuning
