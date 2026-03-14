@@ -19,6 +19,7 @@
 #include "../src/scheduler/time_manager.h"
 #include "../src/scheduler/activity_scheduler.h"
 #include "../src/scheduler/table_manager.h"
+#include "../src/sim/simulation.h"
 #include "../src/util/rng.h"
 
 using swarm::poker::Card;
@@ -857,6 +858,56 @@ void test_table_manager_uses_activity_and_lifecycle_for_eligibility() {
     require(plan.deferred_swarm_ids.size() == 1 && plan.deferred_swarm_ids[0] == playing.id(), "only living play-mode swarms remain eligible but can still be deferred");
 }
 
+void test_simulation_population_initialization_is_accounted_and_deterministic() {
+    swarm::sim::PopulationConfig config;
+    config.swarm_count = 10;
+    config.seed = 424242;
+
+    auto first = swarm::sim::Population::create_default(config);
+    auto second = swarm::sim::Population::create_default(config);
+
+    require(first.swarms().size() == 10, "population creates requested swarm count");
+    require(first.chip_manager().chips_in_play() == static_cast<std::int64_t>(10 * swarm::core::Swarm::starting_bankroll), "population bankroll is injected into chip manager");
+    require(first.chip_manager().invariants_hold(), "population chip invariants hold after initialization");
+    require(first.swarms().front().total_agents() == second.swarms().front().total_agents(), "population initialization is deterministic for first swarm size");
+    require(first.swarms()[3].hands_played() == second.swarms()[3].hands_played(), "population initialization is deterministic for lifecycle seeding");
+}
+
+void test_simulation_step_preserves_chip_accounting_and_advances_state() {
+    swarm::sim::SimulationConfig config;
+    config.population.seed = 9090;
+    config.population.swarm_count = 12;
+    config.hands_per_table_block = 3;
+
+    swarm::sim::Simulation simulation(config);
+    const auto chips_before = simulation.population().chip_manager().chips_in_play();
+    const auto swarms_before = simulation.population().swarms().size();
+
+    const auto result = simulation.step_block();
+    const auto& latest = simulation.statistics().latest();
+
+    require(result.time.hand_block == 1, "simulation step advances one hand block");
+    require(result.chip_accounting_ok, "simulation step preserves chip accounting");
+    require(latest.total_bankroll == chips_before, "total bankroll matches chips in play after one block");
+    require(simulation.population().chip_manager().chips_in_play() == chips_before, "chip manager chips in play remain stable without burns/injections dominating first step");
+    require(latest.total_swarms >= swarms_before, "simulation maintains or grows swarm population after reproduction pass");
+    require(latest.playing_swarms + latest.resting_swarms + latest.sleeping_swarms == latest.total_swarms, "every swarm has an activity bucket");
+}
+
+void test_simulation_run_blocks_produces_statistics_history() {
+    swarm::sim::SimulationConfig config;
+    config.population.seed = 123456;
+    config.population.swarm_count = 14;
+    config.hands_per_table_block = 2;
+
+    swarm::sim::Simulation simulation(config);
+    simulation.run_blocks(4);
+
+    require(simulation.statistics().history().size() == 4, "simulation records one statistics snapshot per block");
+    require(simulation.statistics().latest().chip_accounting_ok, "latest simulation snapshot reports healthy accounting");
+    require(!simulation.latest_statistics_json().empty(), "simulation exports structured statistics");
+}
+
 } // namespace
 
 int main() {
@@ -890,6 +941,9 @@ int main() {
     test_table_manager_prevents_double_booking_and_fills_full_table();
     test_table_manager_handles_leftovers_gracefully();
     test_table_manager_uses_activity_and_lifecycle_for_eligibility();
+    test_simulation_population_initialization_is_accounted_and_deterministic();
+    test_simulation_step_preserves_chip_accounting_and_advances_state();
+    test_simulation_run_blocks_produces_statistics_history();
     std::cout << "PASS: test_poker\n";
     return 0;
 }

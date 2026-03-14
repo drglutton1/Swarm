@@ -1,128 +1,156 @@
 # Swarm Poker Ecosystem - Status
 
-## Stage A / Phase 6
+## Stage A / Phase 7
 
-Status: **verified Phase 6 scheduler substrate implemented and locally tested after the clean restart.**
+Status: **verified Phase 7 simulation substrate implemented and locally smoke-tested.**
 
-This repo now contains:
-- the earlier curator corrective poker/spec pass,
-- the pre-Phase-6 governance/RNG hardening pass, and
-- a first real scheduler substrate for time progression, activity scheduling, and table formation.
+This is the first real integration layer tying together:
+- swarm/core state
+- scheduler time + activity + table planning
+- poker table execution
+- economy accounting
+- lifecycle evaluation + mortality/inheritance hooks
+- social info exchange + mate selection hooks
+- reproduction into a growing population
+- structured simulation statistics output
 
-## Phase 6 implemented
+It is **not** a Phase 8 scale-up run. It is a cautious, testable substrate for stepping the ecosystem forward in blocks and checking whether the plumbing stays sane.
 
-### 1) Time management
+## Phase 7 implemented
 
-Added `src/scheduler/time_manager.h/.cpp`.
+### 1) Population layer
 
-What it now supports:
-- explicit scheduler-facing `tick`, `hand_block`, `hands_elapsed`, and `tick_in_block`
-- configurable `hands_per_block`
-- configurable `ticks_per_block`
-- advancing by ticks or by hand blocks
-- deterministic progression suitable for driving future scheduling passes
-
-This is intentionally infrastructure, not a full world-clock or event engine.
-
-### 2) Activity scheduling
-
-Added `src/scheduler/activity_scheduler.h/.cpp`.
+Added `src/sim/population.h/.cpp`.
 
 What it now supports:
-- three activity modes:
-  - `play`
-  - `active_rest`
-  - `sleep`
-- a persistent `ActivityState` with tracked play/rest/sleep tick counts
-- `ActivityPreferences` designed to be evolvable later instead of hard-coding a final behavior model
-- preference derivation from existing swarm traits (`confidence`, `risk`, `honesty`, `skepticism`)
-- lifecycle-aware scheduling hooks using existing `evolution::evaluate(...)`
-- minimum sleep enforcement via a cycle-based rule that guarantees at least **30% sleep** across each scheduler cycle
+- a deterministic simulation population with:
+  - shared `Ocean`
+  - `std::vector<Swarm>`
+  - `ChipManager`
+  - seeded RNG
+  - per-swarm runtime/activity bookkeeping
+  - offspring linkage tracking for later inheritance
+- deterministic/testable initialization of a small-to-moderate swarm population
+- initial bankroll injection through the economy layer so chip accounting starts honest instead of relying on invisible bootstrap chips
+- seeded lifecycle staging across youth / maturity / old-age cohorts
 
-Truthful scope note:
-- this is a substrate for scheduling eligibility and rhythm
-- it is **not** a full fatigue model, circadian system, or Phase 7 behavioral simulator
+Honest note:
+- this is still an in-memory population substrate, not a persistence layer or distributed world model.
 
-### 3) Table management
+### 2) Integrated simulation loop
 
-Added `src/scheduler/table_manager.h/.cpp`.
+Added `src/sim/simulation.h/.cpp`.
 
 What it now supports:
-- builds a scheduling pass from swarm entries containing:
-  - swarm pointer
-  - current activity mode
-  - lifecycle state
-- only swarms that are both:
-  - in `play` mode, and
-  - alive / bankroll-positive by lifecycle/economy state
-  are considered table-eligible
-- fills tables with a target size of **8 swarms** when possible
-- guarantees **no double-booking** in a single scheduling pass
-- sorts eligible swarms deterministically (bankroll desc, then id) before seating
+- stepping the world by **hand blocks**
+- per-block ocean refresh
+- per-swarm lifecycle evaluation
+- per-swarm scheduler activity updates using the Phase 6 scheduler substrate
+- table planning via `scheduler::TableManager`
+- actual table execution for assigned swarms through the existing poker engine
+- bankroll deltas written back into swarm state after poker play
+- swarm hand counters updated from real table execution
+- mortality pass + inheritance processing hooks
+- social-information gathering + mate-selection based reproduction attempt pass
+- population growth when reproduction succeeds
 
-### Leftovers policy
+Important constraint:
+- the integrated substrate currently uses **zero rake by default** inside the Phase 7 world loop so chip accounting remains exact. The first smoke run exposed that table rake was leaking outside the simulation economy accounting model. Rather than pretend that was solved, Phase 7 keeps rake off until a proper ecosystem sink/account is implemented.
 
-Implemented honest, simple leftovers handling:
-- fill all possible 8-swarm tables first
-- if **2 to 7** eligible swarms remain, create one short table
-- if **1** eligible swarm remains, do **not** fabricate a solo table; defer that swarm to the next pass
+### 3) Statistics / output
 
-That policy is graceful without pretending a richer matchmaking layer already exists.
+Added `src/sim/statistics.h/.cpp`.
 
-## Files created / changed in Phase 6
+What it now supports:
+- block-by-block snapshots capturing:
+  - total / alive / dead swarm counts
+  - youth / mature / old-age counts
+  - reproduction-ready counts
+  - play / rest / sleep activity counts
+  - tables formed
+  - hands resolved
+  - births and processed deaths
+  - bankroll totals / min / max / average
+  - chip-accounting health flag
+- JSON-style structured output for analysis
+- `swarm_poker_sim.exe --simulate-blocks N [--population N] [--seed N]`
+
+### 4) Test coverage
+
+Updated `test/test_poker.cpp` with Phase 7 coverage for:
+- deterministic population initialization
+- initial chip-accounting correctness in the population layer
+- one integrated simulation block advancing time and preserving accounting
+- multi-block statistics history generation
+
+## Files created / changed in Phase 7
 
 ### New files
-- `src/scheduler/time_manager.h`
-- `src/scheduler/time_manager.cpp`
-- `src/scheduler/activity_scheduler.h`
-- `src/scheduler/activity_scheduler.cpp`
-- `src/scheduler/table_manager.h`
-- `src/scheduler/table_manager.cpp`
+- `src/sim/population.h`
+- `src/sim/population.cpp`
+- `src/sim/statistics.h`
+- `src/sim/statistics.cpp`
+- `src/sim/simulation.h`
+- `src/sim/simulation.cpp`
 
 ### Updated files
+- `CMakeLists.txt`
+- `src/main.cpp`
 - `test/test_poker.cpp`
-  - added scheduler coverage for:
-    - time/block progression
-    - minimum 30% sleep enforcement
-    - no double-booking
-    - 8-seat fill correctness
-    - leftovers policy
-    - lifecycle/activity-based table eligibility
 - `STATUS.md`
 
 ## Verification performed
 
-### Build commands
+### Build commands run
 
-- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc src/main.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp -o swarm_poker_sim.exe`
-- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp -o test_poker.exe`
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc src/main.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp src/sim/population.cpp src/sim/statistics.cpp src/sim/simulation.cpp -o swarm_poker_sim.exe`
+- `C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp src/sim/population.cpp src/sim/statistics.cpp src/sim/simulation.cpp -o test_poker.exe`
 
-### Test / run results
+### Test result
 
 - `test_poker.exe`
   - Result: **PASS**
-- `swarm_poker_sim.exe --hands 10 --quiet`
-  - Result: **runs successfully**
-  - Sample verified output included `hands=10`, `rake=30`, `chips_ok=true`
+
+### Modest integrated smoke run
+
+Command run:
+- `swarm_poker_sim.exe --simulate-blocks 10 --population 12 --seed 1337`
+
+What actually happened:
+- simulation ran successfully and emitted structured history
+- first four blocks had all swarms sleeping under the current scheduler cadence
+- blocks 5-10 formed **1 table per block**
+- each active block resolved **30 seated-hand participations** (`6` swarms seated for `5` hands)
+- bankrolls redistributed across participants while total bankroll remained exactly **60000**
+- chip accounting stayed **true** for all 10 blocks after switching the integrated loop to zero-rake mode
+- no births or processed deaths occurred during this short smoke run
+
+That is a real integrated run, but still a modest one.
 
 ## Honest current limitations
 
-Phase 6 now provides a real scheduler substrate, but it is still intentionally limited:
-- activity selection is still a compact heuristic policy, not a learned or fully evolved behavior system
-- scheduler state is not yet threaded through the main simulation loop as a full multi-table world orchestrator
-- table management currently outputs assignments/deferred swarms; it does not yet run parallel table economies or per-table hand execution
-- leftovers policy is intentionally simple and honest, not a sophisticated balancing or waitlist optimizer
-- no Phase 7 social/meta-game simulation was added here
+Phase 7 is real, but still intentionally conservative:
+- poker table execution is integrated as a substrate, not yet a swarm-brain-driven seat-by-seat decision bridge
+- social/reproduction is wired in, but the short smoke run did not yet produce offspring; this path is present but not yet richly validated under longer runs
+- mortality/inheritance plumbing exists, but the short local smoke run did not drive deep death cascades
+- no external persistence, checkpointing, or resume support
+- no large-scale benchmarking, overnight runs, or profiling yet
+- no ecosystem-level rake sink/account yet, which is why the integrated loop currently defaults to `rake_per_hand = 0`
+- scheduler behavior currently produces a very coarse cadence (sleep-heavy early blocks, then stable play blocks)
 
-## Readiness
+## Readiness assessment
 
-**Yes — this milestone is strong enough that Phase 7 can begin.**
+**Yes — the project is now ready for a cautious first real simulation run, but not yet a serious long-duration or high-scale ecosystem campaign.**
 
-Reason:
-- time progression substrate exists
-- play/rest/sleep scheduling exists with enforced minimum sleep
-- table assignment exists with truthful eligibility rules and deterministic leftovers handling
-- regression coverage for the required scheduler behaviors passes locally
+What "ready" means here:
+- the major subsystems are now actually threaded together
+- local tests pass
+- a modest integrated run completed
+- bankroll accounting remained sane
+- structured output exists for inspection
 
-Honest caveat:
-- Phase 7 should build on this scheduler rather than assume it already simulates richer social coordination, travel, fatigue, or full ecosystem orchestration.
+What it does **not** mean:
+- not ready to claim emergent society results
+- not ready to claim reproduction dynamics are proven
+- not ready to claim economy sinks/sources beyond the current honest model
+- not ready to skip additional smoke runs, parameter tuning, and instrumentation before any overnight run

@@ -11,12 +11,14 @@
 #include "evolution/lifecycle.h"
 #include "social/face.h"
 #include "social/info_exchange.h"
+#include "sim/simulation.h"
 
 namespace {
 
 void print_usage() {
     std::cout << "Usage:\n"
-              << "  swarm_poker_sim [--hands N] [--seed N] [--benchmark N] [--quiet]\n";
+              << "  swarm_poker_sim [--hands N] [--seed N] [--benchmark N] [--quiet]\n"
+              << "  swarm_poker_sim --simulate-blocks N [--population N] [--seed N] [--quiet]\n";
 }
 
 const char* action_name(swarm::core::ActionType action) {
@@ -53,12 +55,18 @@ int main(int argc, char** argv) {
         bool verbose = true;
         bool benchmark = false;
         int benchmark_hands = 100000;
+        int simulate_blocks = 0;
+        std::size_t population_size = 12;
         std::uint64_t seed = 1337;
 
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--hands" && i + 1 < argc) {
                 hands = std::stoi(argv[++i]);
+            } else if (arg == "--simulate-blocks" && i + 1 < argc) {
+                simulate_blocks = std::stoi(argv[++i]);
+            } else if (arg == "--population" && i + 1 < argc) {
+                population_size = static_cast<std::size_t>(std::stoull(argv[++i]));
             } else if (arg == "--seed" && i + 1 < argc) {
                 seed = static_cast<std::uint64_t>(std::stoull(argv[++i]));
             } else if (arg == "--benchmark" && i + 1 < argc) {
@@ -73,6 +81,16 @@ int main(int argc, char** argv) {
             } else {
                 throw std::runtime_error("unknown argument: " + arg);
             }
+        }
+
+        if (simulate_blocks > 0) {
+            swarm::sim::SimulationConfig config;
+            config.population.seed = seed;
+            config.population.swarm_count = population_size;
+            swarm::sim::Simulation simulation(config);
+            simulation.run_blocks(static_cast<std::size_t>(simulate_blocks));
+            std::cout << simulation.latest_statistics_json();
+            return simulation.statistics().latest().chip_accounting_ok ? 0 : 2;
         }
 
         swarm::util::Rng rng(seed + 99);

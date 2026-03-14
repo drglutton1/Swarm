@@ -21,7 +21,13 @@ set(CORE_SOURCES
     src/evolution/crossover.cpp
     src/social/face.cpp
     src/social/info_exchange.cpp
-    src/social/mate_selection.cpp)
+    src/social/mate_selection.cpp
+    src/scheduler/time_manager.cpp
+    src/scheduler/activity_scheduler.cpp
+    src/scheduler/table_manager.cpp
+    src/sim/population.cpp
+    src/sim/statistics.cpp
+    src/sim/simulation.cpp)
 
 add_library(swarm_core ${CORE_SOURCES})
 target_include_directories(swarm_core PUBLIC src)
