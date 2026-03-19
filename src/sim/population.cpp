@@ -1,5 +1,6 @@
 #include "population.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include "../core/chromosome.h"
@@ -18,13 +19,17 @@ swarm::core::Chromosome make_random_chromosome(
     return swarm::core::Chromosome::spawn_from_blueprint(genome, agent_count, config, ocean_size);
 }
 
-swarm::core::Swarm make_seeded_swarm(const PopulationConfig& config, swarm::util::Rng& rng) {
+swarm::core::Swarm make_random_swarm(const PopulationConfig& config, swarm::util::Rng& rng, bool seed_lifecycle) {
     const std::size_t first_agents = static_cast<std::size_t>(rng.next_int(2, 9));
     const std::size_t second_agents = static_cast<std::size_t>(rng.next_int(2, 9));
     auto swarm = swarm::core::Swarm(
         make_random_chromosome(first_agents, config.state_size, static_cast<std::uint32_t>(config.ocean_size), rng),
         make_random_chromosome(second_agents, config.state_size, static_cast<std::uint32_t>(config.ocean_size), rng),
         0);
+
+    if (!seed_lifecycle) {
+        return swarm;
+    }
 
     const std::uint64_t lifecycle_roll = static_cast<std::uint64_t>(rng.next_int<int>(0, 3));
     if (lifecycle_roll == 0) {
@@ -52,9 +57,10 @@ Population Population::create_default(PopulationConfig config) {
 
     population.swarms_.reserve(config.swarm_count);
     for (std::size_t i = 0; i < config.swarm_count; ++i) {
-        auto& swarm = population.swarms_.emplace_back(make_seeded_swarm(config, population.rng_));
+        auto& swarm = population.swarms_.emplace_back(make_random_swarm(config, population.rng_, true));
         population.chip_manager_.inject(swarm, config.starting_bankroll);
         population.runtime_.emplace(swarm.id(), SwarmRuntimeState{});
+        population.register_founder(swarm.id());
     }
 
     population.rebuild_index();
@@ -112,6 +118,14 @@ const SwarmRuntimeState& Population::runtime_state(std::uint64_t swarm_id) const
 void Population::register_offspring(std::uint64_t parent_a, std::uint64_t parent_b, std::uint64_t child_id) {
     offspring_links_[parent_a].push_back(child_id);
     offspring_links_[parent_b].push_back(child_id);
+
+    const auto parent_a_it = lineage_.find(parent_a);
+    const auto parent_b_it = lineage_.find(parent_b);
+    const auto root_id = (parent_a_it != lineage_.end()) ? parent_a_it->second.root_id : parent_a;
+    const auto depth_a = (parent_a_it != lineage_.end()) ? parent_a_it->second.depth : 0U;
+    const auto depth_b = (parent_b_it != lineage_.end()) ? parent_b_it->second.depth : 0U;
+    lineage_[child_id] = LineageInfo{root_id, parent_a, parent_b, std::max(depth_a, depth_b) + 1};
+
     runtime_[child_id] = SwarmRuntimeState{};
     rebuild_index();
 }
@@ -133,6 +147,30 @@ std::vector<swarm::core::Swarm*> Population::living_offspring_of(std::uint64_t p
         }
     }
     return result;
+}
+
+swarm::core::Swarm Population::spawn_random_swarm(bool seed_lifecycle) {
+    return make_random_swarm(config_, rng_, seed_lifecycle);
+}
+
+swarm::core::Swarm& Population::append_swarm(swarm::core::Swarm swarm, std::int64_t bankroll) {
+    if (swarm.bankroll() > 0) {
+        swarm.remove_bankroll(swarm.bankroll());
+    }
+    auto& appended = swarms_.emplace_back(std::move(swarm));
+    chip_manager_.inject(appended, bankroll);
+    runtime_[appended.id()] = SwarmRuntimeState{};
+    register_founder(appended.id());
+    rebuild_index();
+    return appended;
+}
+
+const Population::LineageInfo& Population::lineage_info(std::uint64_t swarm_id) const {
+    const auto it = lineage_.find(swarm_id);
+    if (it == lineage_.end()) {
+        throw std::out_of_range("missing lineage for swarm");
+    }
+    return it->second;
 }
 
 void Population::refresh_ocean() {
@@ -167,6 +205,10 @@ void Population::prune_dead() {
     }
     swarms_.resize(write);
     rebuild_index();
+}
+
+void Population::register_founder(std::uint64_t swarm_id) {
+    lineage_.emplace(swarm_id, LineageInfo{swarm_id, 0, 0, 0});
 }
 
 } // namespace swarm::sim

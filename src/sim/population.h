@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -31,6 +32,13 @@ struct SwarmRuntimeState {
 
 class Population {
 public:
+    struct LineageInfo {
+        std::uint64_t root_id = 0;
+        std::uint64_t parent_a = 0;
+        std::uint64_t parent_b = 0;
+        std::uint32_t depth = 0;
+    };
+
     Population() = default;
     explicit Population(PopulationConfig config);
 
@@ -56,11 +64,16 @@ public:
 
     void register_offspring(std::uint64_t parent_a, std::uint64_t parent_b, std::uint64_t child_id);
     [[nodiscard]] std::vector<swarm::core::Swarm*> living_offspring_of(std::uint64_t parent_id);
+    [[nodiscard]] swarm::core::Swarm spawn_random_swarm(bool seed_lifecycle = false);
+    swarm::core::Swarm& append_swarm(swarm::core::Swarm swarm, std::int64_t bankroll);
+    [[nodiscard]] const LineageInfo& lineage_info(std::uint64_t swarm_id) const;
     void refresh_ocean();
     void rebuild_index();
     void prune_dead();
 
 private:
+    void register_founder(std::uint64_t swarm_id);
+
     PopulationConfig config_{};
     swarm::core::Ocean ocean_{};
     std::vector<swarm::core::Swarm> swarms_{};
@@ -70,6 +83,7 @@ private:
     std::unordered_map<std::uint64_t, SwarmRuntimeState> runtime_{};
     std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> offspring_links_{};
     std::unordered_map<std::uint64_t, std::size_t> id_to_index_{};
+    std::unordered_map<std::uint64_t, LineageInfo> lineage_{};
 };
 
 } // namespace swarm::sim

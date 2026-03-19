@@ -694,7 +694,7 @@ void test_rng_seed_reproducibility_and_ranges() {
 void test_default_policy_alignment() {
     swarm::evolution::LifecyclePolicy lifecycle;
     swarm::evolution::CrossoverPolicy crossover;
-    require(lifecycle.reproduction_cooldown_hands == 10000, "default reproduction cooldown aligned to spec");
+    require(lifecycle.reproduction_cooldown_hands == 3000, "default reproduction cooldown aligned to spec");
     require(std::fabs(crossover.crossover_probability - 0.01) < 1e-9, "default crossover probability aligned to spec");
 }
 
@@ -785,6 +785,59 @@ void test_scheduler_enforces_minimum_sleep_ratio() {
 
     require(state.total_ticks == 10, "activity scheduler tracks total ticks");
     require(state.sleep_ticks >= 3, "activity scheduler enforces at least 30 percent sleep per cycle");
+}
+
+void test_scheduler_can_enforce_fixed_activity_quotas() {
+    swarm::util::Rng rng(9002);
+    auto swarm = make_swarm(2, 3, rng);
+    swarm.set_hands_played(20000);
+
+    swarm::scheduler::ActivityPreferences preferences;
+    preferences.cycle_ticks = 10;
+    preferences.fixed_play_ratio = 0.5f;
+    preferences.fixed_rest_ratio = 0.3f;
+    preferences.fixed_sleep_ratio = 0.2f;
+
+    swarm::scheduler::ActivityScheduler scheduler(preferences);
+    swarm::scheduler::ActivityState state;
+    swarm::scheduler::TimeManager time;
+    for (int block = 0; block < 10; ++block) {
+        const auto lifecycle = swarm::evolution::evaluate(swarm);
+        state = scheduler.next_state(swarm, lifecycle, time.now(), block == 0 ? nullptr : &state);
+        time.advance_hand_blocks();
+    }
+
+    require(state.total_ticks == 10, "fixed-quota scheduler tracks total ticks");
+    require(state.play_ticks == 5, "fixed-quota scheduler hits 50 percent play in one cycle");
+    require(state.active_rest_ticks == 3, "fixed-quota scheduler hits 30 percent rest in one cycle");
+    require(state.sleep_ticks == 2, "fixed-quota scheduler hits 20 percent sleep in one cycle");
+}
+
+void test_lifecycle_policy_defaults_match_balance_pass() {
+    const swarm::evolution::LifecyclePolicy policy;
+    require(policy.maturity_start_hands == 3000, "lifecycle maturity starts at 3000 hands");
+    require(policy.reproduction_cooldown_hands == 3000, "lifecycle reproduction cooldown is 3000 hands");
+    require(policy.old_age_start_hands == 90000, "lifecycle old age threshold unchanged at 90000 hands");
+    require(policy.death_hands == 100000, "lifecycle death threshold unchanged at 100000 hands");
+    require(policy.max_offspring == 12, "lifecycle max offspring raised to 12");
+}
+
+void test_simulation_ubi_injects_on_interval() {
+    swarm::sim::SimulationConfig config;
+    config.population.seed = 1337;
+    config.population.swarm_count = 8;
+    config.ubi_enabled = true;
+    config.ubi_interval_blocks = 1;
+    config.ubi_amount = 150;
+
+    swarm::sim::Simulation simulation(config);
+    const auto injected_before = simulation.population().chip_manager().chips_injected();
+    const auto result = simulation.step_block();
+    const auto injected_after = simulation.population().chip_manager().chips_injected();
+
+    require(result.ubi_paid > 0, "ubi pays chips on the configured interval");
+    require(injected_after > injected_before, "ubi increases injected chips total");
+    require(result.chip_accounting_ok, "ubi path preserves chip accounting invariants");
 }
 
 void test_table_manager_prevents_double_booking_and_fills_full_table() {
@@ -986,6 +1039,9 @@ int main() {
     test_mate_selection_respects_eligibility_and_parity();
     test_time_manager_tracks_ticks_and_hand_blocks();
     test_scheduler_enforces_minimum_sleep_ratio();
+    test_scheduler_can_enforce_fixed_activity_quotas();
+    test_lifecycle_policy_defaults_match_balance_pass();
+    test_simulation_ubi_injects_on_interval();
     test_table_manager_prevents_double_booking_and_fills_full_table();
     test_table_manager_handles_leftovers_gracefully();
     test_table_manager_uses_activity_and_lifecycle_for_eligibility();

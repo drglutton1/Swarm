@@ -1,38 +1,37 @@
 agent: darwin
 project: swarm_poker_ecosystem
 version: 1
-updated: 2026-03-14T06:55:00Z
+updated: 2026-03-19T07:15:00Z
 current_phase: 7
-current_task: "stabilization pass implemented: activity costs + richer telemetry are in; scheduler remains behaviorally weak and needs another tuning pass before serious runs"
-blocker: "integrated accounting is healthy, but ecosystem cadence still collapses quickly into bankruptcy-heavy dynamics with insufficient sustained table formation"
+current_task: "Opus-directed UBI balance pass implemented: UBI + earlier lifecycle timing + lower rest/sleep costs + stronger telemetry; validation shows accounting is healthy but the requested smoke test still collapses behaviorally"
+blocker: "UBI alone does not stabilize the ecology at 200 swarms / 500 blocks / ocean_size 10000 / seed 1337; population and table activity still collapse before a healthy self-sustaining loop emerges"
 phases:
   1_poker_engine: {status: done, hands_sec: 248000, tests: pass, notes: "full NLHE verified; 5/5 blinds; chip conservation"}
   2_core_entities: {status: done, notes: "two-chromosome swarm core aligned; governance parity enforced"}
-  3_economy: {status: done, notes: "external rake burns and activity burns tracked through ChipManager; integrated accounting verified"}
-  4_lifecycle: {status: done, notes: "death/inheritance wiring active; death causes now surfaced in stats"}
+  3_economy: {status: done, notes: "external rake burns, activity burns, inheritance, and UBI injections all tracked through ChipManager"}
+  4_lifecycle: {status: done, notes: "maturity/reproduction timing accelerated to 3000 hands, max offspring raised to 12, old-age/death thresholds unchanged"}
   5_social: {status: done, notes: "mate selection bounded by parity partitioning + candidate sampling"}
-  6_scheduler: {status: partial, notes: "rebalanced and minimum sleep still enforced, but activity cadence is still not behaviorally healthy in integrated validation"}
-  7_simulation: {status: done, notes: "integrated tables use swarm.decide(); 200/1000-block validation kept accounting healthy under activity burns + reproduction + rake plumbing"}
-  8_observe: {status: done, notes: "action diversity, reproduction attempts/successes, death causes, activity ratios, and activity costs are now emitted in stats JSON"}
+  6_scheduler: {status: partial, notes: "rest/sleep costs reduced, but integrated activity still collapses under requested smoke validation"}
+  7_simulation: {status: done, notes: "UBI now executes after deaths and before reproduction; smoke validation kept accounting healthy but ecology still collapsed"}
+  8_observe: {status: done, notes: "per-block and per-100-block telemetry now includes alive counts, death splits, bankroll stats, chip flows, gene averages, lineage depth, and top dynasties"}
 decisions:
   - blinds: "SB=5, BB=5"
-  - rake: "tracked as external burn from integrated table settlement"
-  - activity_costs: "active_rest=15 and sleep=5 per 30-hand-equivalent block"
+  - rake: "unchanged"
+  - ubi: "enabled by default with amount=150 every 30 blocks for living swarms with bankroll > 0"
+  - activity_costs: "active_rest=3 and sleep=1 per block"
   - reproduction: "EVEN x ODD parity, chromosomal"
+  - donation_unlock: "not implemented in current codebase; no fake config added"
   - swarm_size: "randint(2,9)+randint(2,9), min 4, max 18"
-  - ocean_size: "10M float32 target; current dev substrate smaller"
+  - ocean_size: "10M float32 target; smoke validation run used 10000"
   - target_swarms: 100000
-  - language: "C++17, no POSIX, std::thread only"
-  - compiler: "mingw g++"
-  - governance: "odd=alpha-led, even=democratic"
-compiler: g++
-compile_cmd: 'C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/core/ocean.cpp src/core/genome.cpp src/core/decoder.cpp src/core/agent.cpp src/core/chromosome.cpp src/core/swarm.cpp src/economy/chip_manager.cpp src/economy/transfer.cpp src/economy/inheritance.cpp src/evolution/lifecycle.cpp src/evolution/reproduction.cpp src/evolution/mutation.cpp src/evolution/crossover.cpp src/social/face.cpp src/social/info_exchange.cpp src/social/mate_selection.cpp src/scheduler/time_manager.cpp src/scheduler/activity_scheduler.cpp src/scheduler/table_manager.cpp src/sim/population.cpp src/sim/statistics.cpp src/sim/simulation.cpp -o test_poker.exe'
+compile_cmd: 'C:\msys64\mingw64\bin\g++.exe -std=c++17 -O2 -Isrc test/test_poker.cpp src/... -o build/test_poker.exe'
 os: Windows 11
 hardware: "i9, 32GB DDR5, RTX 3070"
 changed_files:
-  - src/evolution/reproduction.cpp
-  - src/scheduler/activity_scheduler.cpp
+  - src/evolution/lifecycle.h
+  - src/main.cpp
   - src/sim/population.h
+  - src/sim/population.cpp
   - src/sim/simulation.h
   - src/sim/simulation.cpp
   - src/sim/statistics.h
@@ -41,12 +40,13 @@ changed_files:
   - STATUS.md
   - darwin_core.yaml
 bugs:
-  - "scheduler/activity cadence still does not sustain healthy long-horizon table formation"
-  - "integrated runs still collapse into bankruptcy-heavy dynamics too quickly"
+  - "UBI improves accounting-visible liquidity but does not prevent late-run collapse in the requested smoke test"
+  - "reproduction remains too weak to sustain births in the last 100 blocks of the requested smoke test"
+  - "table formation still dries up completely before block 500 in the requested smoke test"
 benchmarks:
   - {phase: 1, metric: "hands/sec", value: 248000, date: "2026-03-11"}
-  - {phase: 7, metric: "1000 blocks / 100 swarms", value: "accounting healthy; behavior still weak", date: "2026-03-14"}
+  - {phase: 7, metric: "200 swarms / 500 blocks / ocean_size 10000 / seed 1337", value: "accounting healthy; alive_count=1; births_last_100=0; tables_last_100=0", date: "2026-03-19"}
 learnings:
-  - "Activity costs can be integrated cleanly through ChipManager without breaking accounting invariants"
-  - "Better telemetry helps, but the scheduler is still the main blocker to meaningful ecosystem behavior"
-  - "Current deaths are dominated by bankruptcy, which is a useful signal that cadence/economics still need tuning rather than storytelling"
+  - "UBI can be integrated cleanly through ChipManager without breaking accounting invariants"
+  - "Stronger telemetry makes failure modes much easier to inspect honestly"
+  - "This tuning pass did not materially stabilize the ecosystem; additional economics/scheduler/reproduction work is still needed"

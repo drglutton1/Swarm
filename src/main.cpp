@@ -18,7 +18,7 @@ namespace {
 void print_usage() {
     std::cout << "Usage:\n"
               << "  swarm_poker_sim [--hands N] [--seed N] [--benchmark N] [--quiet]\n"
-              << "  swarm_poker_sim --simulate-blocks N [--population N] [--seed N] [--quiet]\n";
+              << "  swarm_poker_sim --simulate-blocks N [--population N] [--ocean-size N] [--seed N] [--activity-quota-play R] [--activity-quota-rest R] [--activity-quota-sleep R] [--quiet]\n";
 }
 
 const char* action_name(swarm::core::ActionType action) {
@@ -58,6 +58,10 @@ int main(int argc, char** argv) {
         int simulate_blocks = 0;
         std::size_t population_size = 12;
         std::uint64_t seed = 1337;
+        std::size_t ocean_size = 512;
+        float activity_quota_play = 0.0f;
+        float activity_quota_rest = 0.0f;
+        float activity_quota_sleep = 0.0f;
 
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
@@ -69,6 +73,14 @@ int main(int argc, char** argv) {
                 population_size = static_cast<std::size_t>(std::stoull(argv[++i]));
             } else if (arg == "--seed" && i + 1 < argc) {
                 seed = static_cast<std::uint64_t>(std::stoull(argv[++i]));
+            } else if (arg == "--ocean-size" && i + 1 < argc) {
+                ocean_size = static_cast<std::size_t>(std::stoull(argv[++i]));
+            } else if (arg == "--activity-quota-play" && i + 1 < argc) {
+                activity_quota_play = std::stof(argv[++i]);
+            } else if (arg == "--activity-quota-rest" && i + 1 < argc) {
+                activity_quota_rest = std::stof(argv[++i]);
+            } else if (arg == "--activity-quota-sleep" && i + 1 < argc) {
+                activity_quota_sleep = std::stof(argv[++i]);
             } else if (arg == "--benchmark" && i + 1 < argc) {
                 benchmark = true;
                 benchmark_hands = std::stoi(argv[++i]);
@@ -87,6 +99,10 @@ int main(int argc, char** argv) {
             swarm::sim::SimulationConfig config;
             config.population.seed = seed;
             config.population.swarm_count = population_size;
+            config.population.ocean_size = ocean_size;
+            config.activity.fixed_play_ratio = activity_quota_play;
+            config.activity.fixed_rest_ratio = activity_quota_rest;
+            config.activity.fixed_sleep_ratio = activity_quota_sleep;
             swarm::sim::Simulation simulation(config);
             simulation.run_blocks(static_cast<std::size_t>(simulate_blocks));
             std::cout << simulation.latest_statistics_json();

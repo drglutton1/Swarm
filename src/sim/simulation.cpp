@@ -115,6 +115,7 @@ BlockResult Simulation::step_block() {
     BlockTelemetry telemetry;
     std::size_t deaths_processed = 0;
     process_deaths(deaths_processed, telemetry);
+    apply_ubi(telemetry);
     const std::size_t offspring_born = attempt_social_reproduction(telemetry);
 
     std::vector<swarm::scheduler::SchedulingPassEntry> entries;
@@ -150,10 +151,10 @@ BlockResult Simulation::step_block() {
     }
 
     const auto now = time_.advance_hand_blocks(1);
-    statistics_.capture(population_, now, plan.tables.size(), hands_resolved, offspring_born, deaths_processed, telemetry);
+    statistics_.capture(population_, now, plan.tables.size(), hands_resolved, deaths_processed, telemetry);
 
-    return {now, plan.tables.size(), hands_resolved, offspring_born, deaths_processed, active_rest_cost, sleep_cost,
-        population_.chip_manager().invariants_hold() && population_.chip_manager().chips_in_play() == statistics_.latest().total_bankroll};
+    return {now, plan.tables.size(), hands_resolved, offspring_born, telemetry.births_injection, deaths_processed, active_rest_cost, sleep_cost, telemetry.ubi_paid,
+        population_.chip_manager().invariants_hold() && population_.chip_manager().chips_in_play() == statistics_.latest().total_chips_in_play};
 }
 
 void Simulation::run_blocks(std::size_t block_count) {
@@ -189,8 +190,34 @@ void Simulation::process_deaths(std::size_t& death_count, BlockTelemetry& teleme
     population_.prune_dead();
 }
 
+void Simulation::apply_ubi(BlockTelemetry& telemetry) {
+    if (!config_.ubi_enabled || config_.ubi_interval_blocks == 0) {
+        return;
+    }
+
+    const auto next_block = time_.now().hand_block + 1;
+    if ((next_block % config_.ubi_interval_blocks) != 0) {
+        return;
+    }
+
+    for (auto& swarm : population_.swarms()) {
+        if (!swarm.alive() || swarm.bankroll() <= 0) {
+            continue;
+        }
+        population_.chip_manager().inject(swarm, config_.ubi_amount);
+        telemetry.ubi_paid += config_.ubi_amount;
+    }
+}
+
 std::size_t Simulation::attempt_social_reproduction(BlockTelemetry& telemetry) {
+    struct PendingOffspring {
+        std::uint64_t parent_a = 0;
+        std::uint64_t parent_b = 0;
+        swarm::core::Swarm child;
+    };
+
     std::unordered_set<std::uint64_t> paired_this_block;
+    std::vector<PendingOffspring> pending_births;
     std::size_t births = 0;
 
     std::vector<std::uint64_t> even_ids;
@@ -262,12 +289,7 @@ std::size_t Simulation::attempt_social_reproduction(BlockTelemetry& telemetry) {
             continue;
         }
 
-        if (result.offspring->bankroll() > 0) {
-            result.offspring->remove_bankroll(result.offspring->bankroll());
-        }
-        population_.chip_manager().inject(*result.offspring, config_.population.starting_bankroll);
-        auto& child = population_.swarms().emplace_back(std::move(*result.offspring));
-        population_.register_offspring(seeker.id(), partner->id(), child.id());
+        pending_births.push_back({seeker.id(), partner->id(), std::move(*result.offspring)});
         population_.runtime_state(seeker.id()).offspring_born_in_sim += 1;
         population_.runtime_state(partner->id()).offspring_born_in_sim += 1;
         paired_this_block.insert(seeker.id());
@@ -276,20 +298,26 @@ std::size_t Simulation::attempt_social_reproduction(BlockTelemetry& telemetry) {
         ++telemetry.reproduction_successes;
     }
 
+    for (auto& pending : pending_births) {
+        auto& child = population_.append_swarm(std::move(pending.child), config_.population.starting_bankroll);
+        population_.register_offspring(pending.parent_a, pending.parent_b, child.id());
+        ++telemetry.births_reproduction;
+    }
+
     return births;
 }
 
 std::int64_t Simulation::apply_activity_costs(const BlockTelemetry& telemetry, std::int64_t& active_rest_cost, std::int64_t& sleep_cost) {
-    active_rest_cost = static_cast<std::int64_t>(telemetry.active_rest) * 15;
-    sleep_cost = static_cast<std::int64_t>(telemetry.active_sleep) * 5;
+    active_rest_cost = static_cast<std::int64_t>(telemetry.active_rest) * 3;
+    sleep_cost = static_cast<std::int64_t>(telemetry.active_sleep) * 1;
 
     for (auto& swarm : population_.swarms()) {
         auto& runtime = population_.runtime_state(swarm.id());
         std::int64_t cost = 0;
         if (runtime.activity.mode == swarm::scheduler::ActivityMode::active_rest) {
-            cost = 15;
+            cost = 3;
         } else if (runtime.activity.mode == swarm::scheduler::ActivityMode::sleep) {
-            cost = 5;
+            cost = 1;
         }
         if (cost <= 0) {
             continue;
